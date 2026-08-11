@@ -1,0 +1,10 @@
+[2026-08-11 16:00:01] session=s1 user=u1 type=user_input content=����������ô�� decision=allow risk=low reason=
+[2026-08-11 16:00:09] session=s1 user=u1 type=user_input content=����ɾ�����ݿ� decision=allow risk=low reason=
+[2026-08-11 16:06:40] session=s1 user=u1 type=user_input content=ɾ�� decision=allow risk=low reason=
+[2026-08-11 16:06:51] session=s1 user=u1 type=user_input content=����ɾ�����ݿ� decision=allow risk=low reason=
+[2026-08-11 16:08:29] session=s1 user=u1 type=user_input content=ɾ�� decision=allow risk=low reason=
+[2026-08-11 16:13:45] session=s1 user=u1 type=user_input content=ɾ�� decision=allow risk=low reason=
+[2026-08-11 16:14:32] session=s1 user=u1 type=user_input content=ɾ�� decision=allow risk=low reason=
+[2026-08-11 16:16:06] session=s1 user=u1 type=user_input content=ɾ�� decision=allow risk=low reason=
+[2026-08-11 16:19:21] session=s1 user=u1 type=user_input content=删除 decision=block risk=high reason=命中关键词: 删除
+[2026-08-11 16:23:15] session=s1 user=u1 type=user_input content=删除 decision=block risk=high reason=命中关键词: 删除

@@ -1,0 +1,3 @@
+/api/weather/query
+/api/stock/info
+/api/news/list
