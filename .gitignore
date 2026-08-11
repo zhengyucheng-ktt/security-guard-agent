@@ -1,0 +1,19 @@
+# 审计日志（不提交到仓库）
+audit.log
+
+# Go 编译产物
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# 测试文件
+test.json
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
