@@ -21,3 +21,13 @@ cat audit.log
 ├── audit.log        # 审计日志（自动生成）
 ├── start.sh         # 启动脚本
 └── README.md        # 项目说明
+
+## ⚠️ 编码规范（必须遵守）
+
+所有源代码、配置文件（`rules.txt`、`whitelist.txt`）、测试文件 **必须使用 UTF-8 编码**。
+
+### 正确示例
+```bash
+# 创建测试文件（UTF-8）
+cat > test.json << 'EOF'
+{"session_id":"s1","user_id":"u1","action_type":"user_input","content":"中文内容"}
