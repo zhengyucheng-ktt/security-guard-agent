@@ -1,9 +1,10 @@
 package main
 
+// ============================================================
+
 import (
 	"bufio"
 	"context"
-	
 	"fmt"
 	"log"
 	"net/http"
@@ -11,13 +12,36 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
 
-// ===== 配置 =====
+
+// ============================================================
+// 异步日志
+// ============================================================
+
+var logChan = make(chan logEntry, 1000)
+
+type logEntry struct {
+	SessionID  string
+	UserID     string
+	ActionType string
+	Content    string
+	Decision   string
+	RiskLevel  string
+	Reason     string
+	Score      int
+}
+
+
+// ============================================================
+// 配置
+// ============================================================
+
 const (
 	THRESHOLD_WARNING   = 30
 	THRESHOLD_LIMIT     = 60
@@ -29,7 +53,10 @@ const (
 	SESSION_TTL         = 30 * time.Minute
 )
 
-// ===== 数据结构 =====
+// ============================================================
+// 数据结构
+// ============================================================
+
 type GuardRequest struct {
 	SessionID     string                 `json:"session_id"`
 	UserID        string                 `json:"user_id"`
@@ -56,12 +83,25 @@ type Rule struct {
 	Regex   *regexp.Regexp
 }
 
+// ============================================================
+// 全局变量（含 Redis 降级缓存）
+// ============================================================
+
 var (
 	rules       []Rule
 	whitelist   []string
 	redisClient *redis.Client
 	ctx         = context.Background()
+
+	// Redis 降级缓存
+	memoryCache   = make(map[string]int)
+	cacheMutex    sync.RWMutex
+	useMemoryMode bool
 )
+
+// ============================================================
+// 敏感参数
+// ============================================================
 
 var sensitiveParams = []string{
 	"phone", "mobile", "tel", "telephone",
@@ -122,15 +162,15 @@ func desensitizeIP(ip string) string {
 	}
 	return ip
 }
-// 姓名脱敏：保留第一个字，其余用 *    ← 在这里添加
+
 func desensitizeName(name string) string {
-    runes := []rune(name)
-    if len(runes) <= 1 {
-        return name
-    }
-    return string(runes[0]) + strings.Repeat("*", len(runes)-1)
+	runes := []rune(name)
+	if len(runes) <= 1 {
+		return name
+	}
+	return string(runes[0]) + strings.Repeat("*", len(runes)-1)
 }
-// 营业执照：保留前4位和后4位
+
 func desensitizeLicense(license string) string {
 	if len(license) >= 12 {
 		return license[:4] + strings.Repeat("*", len(license)-8) + license[len(license)-4:]
@@ -138,7 +178,6 @@ func desensitizeLicense(license string) string {
 	return license
 }
 
-// 车牌：省份+字母 + ** + 后3位
 func desensitizePlate(plate string) string {
 	runes := []rune(plate)
 	if len(runes) >= 5 {
@@ -147,7 +186,6 @@ func desensitizePlate(plate string) string {
 	return plate
 }
 
-// 微信号：前5位 + ****** + 后3位
 func desensitizeWechat(wechat string) string {
 	runes := []rune(wechat)
 	if len(runes) > 8 {
@@ -159,106 +197,77 @@ func desensitizeWechat(wechat string) string {
 	return wechat
 }
 
-// 地址脱敏：保留省市区，后续用 *
 func desensitizeAddress(addr string) string {
-    runes := []rune(addr)
-    if len(runes) == 0 {
-        return addr
-    }
+	runes := []rune(addr)
+	if len(runes) == 0 {
+		return addr
+	}
 
-    // 匹配省市区（尽可能长匹配）
-    reProv := regexp.MustCompile(`^([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)`)
-    match := reProv.FindString(addr)
-    
-    // 如果匹配到了，但长度不够（比如只匹配了"北京市"），尝试扩展匹配
-    if match != "" {
-        // 尝试匹配更长的省市区（如"北京市朝阳区"）
-        reProvLong := regexp.MustCompile(`^([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)`)
-        matchLong := reProvLong.FindString(addr)
-        if matchLong != "" && len(matchLong) > len(match) {
-            match = matchLong
-        }
-        return match + strings.Repeat("*", len(addr)-len(match))
-    }
+	reProv := regexp.MustCompile(`^([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)`)
+	match := reProv.FindString(addr)
+	if match != "" {
+		reProvLong := regexp.MustCompile(`^([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)`)
+		matchLong := reProvLong.FindString(addr)
+		if matchLong != "" && len(matchLong) > len(match) {
+			match = matchLong
+		}
+		return match + strings.Repeat("*", len(addr)-len(match))
+	}
 
-    // 兜底
-    if len(runes) > 3 {
-        return string(runes[:3]) + strings.Repeat("*", len(runes)-3)
-    }
-    return addr
+	if len(runes) > 3 {
+		return string(runes[:3]) + strings.Repeat("*", len(runes)-3)
+	}
+	return addr
 }
+
 // ============================================================
-// 主脱敏函数（按优先级顺序）
+// 主脱敏函数
 // ============================================================
+
 func desensitizeContent(content string) string {
 	log.Printf("开始脱敏: [%s]", content)
 	result := content
 
-	// 1. 营业执照（以91开头，避免误匹配身份证）
 	licenseRegex := regexp.MustCompile(`91\d{14}[\dXx]`)
 	result = licenseRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeLicense(match)
-		log.Printf("🔒 脱敏营业执照: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeLicense(match)
 	})
 
-	// 2. 车牌
 	plateRegex := regexp.MustCompile(`[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-HJ-NP-Z0-9]{4,5}`)
 	result = plateRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizePlate(match)
-		log.Printf("🔒 脱敏车牌: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizePlate(match)
 	})
 
-	// 3. 微信号
 	wechatRegex := regexp.MustCompile(`wxid_[a-zA-Z0-9_]+`)
 	result = wechatRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeWechat(match)
-		log.Printf("🔒 脱敏微信号: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeWechat(match)
 	})
 
-	// 4. 身份证（18位，先于手机号）
 	idRegex := regexp.MustCompile(`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`)
 	result = idRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeIDCard(match)
-		log.Printf("🔒 脱敏身份证: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeIDCard(match)
 	})
 
-	// 5. 手机号
 	phoneRegex := regexp.MustCompile(`1[3-9]\d{9}`)
 	result = phoneRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizePhone(match)
-		log.Printf("🔒 脱敏手机号: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizePhone(match)
 	})
 
-	// 6. 银行卡（放后面，避免误匹配身份证）
 	bankRegex := regexp.MustCompile(`[1-9]\d{11,18}`)
 	result = bankRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeBankCard(match)
-		log.Printf("🔒 脱敏银行卡: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeBankCard(match)
 	})
 
-	// 7. 邮箱
 	emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
 	result = emailRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeEmail(match)
-		log.Printf("🔒 脱敏邮箱: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeEmail(match)
 	})
 
-	// 8. IP
 	ipRegex := regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b`)
 	result = ipRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeIP(match)
-		log.Printf("🔒 脱敏IP: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeIP(match)
 	})
 
-	// 9. 姓名（支持全角/半角冒号、空格、等号，支持引号/书名号包裹）
 	nameRegex := regexp.MustCompile(`[《「"']?(?:姓名|名字|用户)[》」"']?[：:=\s]*[《「"']?([\p{Han}·]{1,8})[》」"']?`)
 	result = nameRegex.ReplaceAllStringFunc(result, func(match string) string {
 		sub := nameRegex.FindStringSubmatch(match)
@@ -266,29 +275,25 @@ func desensitizeContent(content string) string {
 			return match
 		}
 		name := sub[1]
-		// 排除误匹配
 		if name == "信息" || name == "ID" || name == "id" || name == "姓名" || name == "名字" {
-			log.Printf("⚠️ 跳过误匹配: %s", name)
 			return match
 		}
-		desensitized := desensitizeName(name)
-		log.Printf("🔒 脱敏姓名: %s → %s", name, desensitized)
-		return strings.Replace(match, name, desensitized, 1)
+		return strings.Replace(match, name, desensitizeName(name), 1)
 	})
 
-	// 10. 地址
 	addrRegex := regexp.MustCompile(`([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)[\p{Han}]{2,30}`)
 	result = addrRegex.ReplaceAllStringFunc(result, func(match string) string {
-		desensitized := desensitizeAddress(match)
-		log.Printf("🔒 脱敏地址: %s → %s", match, desensitized)
-		return desensitized
+		return desensitizeAddress(match)
 	})
 
 	log.Printf("脱敏完成: [%s]", result)
 	return result
 }
 
-// ===== 核心函数 =====
+// ============================================================
+// 核心函数
+// ============================================================
+
 func loadRules() {
 	rules = []Rule{}
 	keywordRules := []string{
@@ -372,7 +377,28 @@ func saveWhitelist() error {
 	return nil
 }
 
+// ============================================================
+// 异步日志（写入队列，不阻塞主流程）
+// ============================================================
+
 func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, reason string, score int) {
+	select {
+	case logChan <- logEntry{
+		SessionID:  sessionID,
+		UserID:     userID,
+		ActionType: actionType,
+		Content:    content,
+		Decision:   decision,
+		RiskLevel:  riskLevel,
+		Reason:     reason,
+		Score:      score,
+	}:
+	default:
+		// 队列满了，丢弃日志，不影响业务
+	}
+}
+
+func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLevel, reason string, score int) {
 	f, err := os.OpenFile("audit.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return
@@ -384,7 +410,29 @@ func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, 
 	f.WriteString(entry)
 }
 
+func startLogWorker() {
+	go func() {
+		for entry := range logChan {
+			writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.Score)
+		}
+	}()
+}
+
+// ============================================================
+// 会话积分（Redis + 内存降级）
+// ============================================================
+
 func getSessionScore(sessionID string) (int, error) {
+	if useMemoryMode {
+		cacheMutex.RLock()
+		defer cacheMutex.RUnlock()
+		score, ok := memoryCache[sessionID]
+		if !ok {
+			return 0, nil
+		}
+		return score, nil
+	}
+
 	key := "session:" + sessionID
 	val, err := redisClient.Get(ctx, key).Result()
 	if err == redis.Nil {
@@ -393,14 +441,25 @@ func getSessionScore(sessionID string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	score, err := strconv.Atoi(val)
-	if err != nil {
-		return 0, err
-	}
-	return score, nil
+	return strconv.Atoi(val)
 }
 
 func updateSessionScore(sessionID string, delta int) (int, error) {
+	if useMemoryMode {
+		cacheMutex.Lock()
+		defer cacheMutex.Unlock()
+		current := memoryCache[sessionID]
+		newScore := current + delta
+		if newScore < 0 {
+			newScore = 0
+		}
+		if newScore > 100 {
+			newScore = 100
+		}
+		memoryCache[sessionID] = newScore
+		return newScore, nil
+	}
+
 	key := "session:" + sessionID
 	current, err := getSessionScore(sessionID)
 	if err != nil {
@@ -417,7 +476,6 @@ func updateSessionScore(sessionID string, delta int) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	log.Printf("📊 会话 %s: 积分 %d → %d", sessionID, current, newScore)
 	return newScore, nil
 }
 
@@ -433,6 +491,10 @@ func getSessionStatus(score int) string {
 	}
 	return "正常"
 }
+
+// ============================================================
+// 检测函数
+// ============================================================
 
 func checkInput(content string) (bool, string, int) {
 	for _, rule := range rules {
@@ -474,6 +536,10 @@ func checkTool(toolName string) bool {
 	}
 	return false
 }
+
+// ============================================================
+// HTTP 处理器
+// ============================================================
 
 func guardHandler(c *gin.Context) {
 	var req GuardRequest
@@ -533,7 +599,7 @@ func guardHandler(c *gin.Context) {
 	if req.SessionID != "" {
 		newScore, err := updateSessionScore(req.SessionID, delta)
 		if err != nil {
-			log.Printf("⚠️ Redis 更新失败: %v", err)
+			log.Printf("⚠️ 积分更新失败: %v", err)
 		} else {
 			resp.CurrentScore = newScore
 			status := getSessionStatus(newScore)
@@ -685,21 +751,33 @@ func adminGetSessions(c *gin.Context) {
 
 func main() {
 	log.Println("=== 安全交互守护智能体 ===")
-         redisClient = redis.NewClient(&redis.Options{
-    Addr:         "172.19.63.110:6379",
-    Password:     "",
-    DB:           0,
-    PoolSize:     10,
-    MinIdleConns: 5,
-    DialTimeout:  5 * time.Second,
-    ReadTimeout:  3 * time.Second,
-    WriteTimeout: 3 * time.Second,
-})
-		pong, err := redisClient.Ping(ctx).Result()
+
+	// 启动异步日志 worker
+	startLogWorker()
+
+	// 初始化 Redis（带降级）
+	redisClient = redis.NewClient(&redis.Options{
+		Addr:         "172.19.63.110:6379",
+		Password:     "",
+		DB:           0,
+		PoolSize:     10,
+		MinIdleConns: 5,
+		DialTimeout:  3 * time.Second,
+		ReadTimeout:  2 * time.Second,
+		WriteTimeout: 2 * time.Second,
+	})
+
+	// 带超时的连接测试
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	pong, err := redisClient.Ping(ctxTimeout).Result()
 	if err != nil {
-		log.Printf("⚠️ Redis 连接失败: %v", err)
+		log.Printf("⚠️ Redis 连接失败: %v，切换到内存缓存模式", err)
+		useMemoryMode = true
 	} else {
 		log.Printf("✅ Redis 连接成功: %s", pong)
+		useMemoryMode = false
 	}
 
 	loadRules()
