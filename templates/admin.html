@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>安全守护智能体 - 管理后台</title>
+<style>
+body{font-family:Microsoft YaHei,Arial,sans-serif;margin:20px;background:#f5f5f5}
+h1{color:#333}
+.card{background:#fff;padding:20px;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,0.1);margin-bottom:20px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;text-align:left;border-bottom:1px solid #ddd}
+th{background:#4CAF50;color:#fff}
+.btn{padding:8px 16px;border:none;border-radius:4px;cursor:pointer}
+.btn-add{background:#4CAF50;color:#fff}
+.btn-delete{background:#f44336;color:#fff}
+.btn-refresh{background:#2196F3;color:#fff}
+.btn-toggle{background:#FF9800;color:#fff}
+.tabs{display:flex;gap:10px;margin-bottom:20px;flex-wrap:wrap}
+.tab{padding:10px 20px;background:#ddd;border-radius:4px;cursor:pointer}
+.tab.active{background:#4CAF50;color:#fff}
+.tab-content{display:none}
+.tab-content.active{display:block}
+pre{background:#f5f5f5;padding:10px;border-radius:4px;max-height:400px;overflow:auto}
+.status-enabled{color:green}
+.status-disabled{color:red}
+</style>
+</head>
+<body>
+<h1>🛡️ 安全交互守护智能体 - 管理后台</h1>
+
+<div class="tabs">
+    <div class="tab active" onclick="showTab('rules')">📋 规则管理</div>
+    <div class="tab" onclick="showTab('whitelist')">✅ 白名单管理</div>
+    <div class="tab" onclick="showTab('nlp')">🧠 自然语言规则</div>
+    <div class="tab" onclick="showTab('logs')">📄 审计日志</div>
+    <div class="tab" onclick="showTab('sessions')">📊 会话监控</div>
+</div>
+
+<!-- 规则管理 -->
+<div id="tab-rules" class="tab-content active">
+<div class="card">
+<h2>📋 规则列表</h2>
+<button class="btn btn-add" onclick="addRule()">+ 新增关键词规则</button>
+<button class="btn btn-refresh" onclick="loadRules()">🔄 刷新</button>
+<table><thead><tr><th>#</th><th>类型</th><th>模式</th><th>原因</th><th>操作</th></tr></thead><tbody id="rules-body"></tbody></table>
+</div></div>
+
+<!-- 白名单管理 -->
+<div id="tab-whitelist" class="tab-content">
+<div class="card">
+<h2>✅ 工具白名单</h2>
+<button class="btn btn-add" onclick="addWhitelist()">+ 新增工具</button>
+<button class="btn btn-refresh" onclick="loadWhitelist()">🔄 刷新</button>
+<table><thead><tr><th>#</th><th>工具名称</th><th>操作</th></tr></thead><tbody id="whitelist-body"></tbody></table>
+</div></div>
+
+<!-- 自然语言规则 -->
+<div id="tab-nlp" class="tab-content">
+<div class="card">
+<h2>🧠 自然语言规则</h2>
+<p style="color:#666;font-size:14px;">用自然语言描述规则，系统自动理解并执行</p>
+<button class="btn btn-add" onclick="addNLPRule()">+ 新增自然语言规则</button>
+<button class="btn btn-refresh" onclick="loadNLPRules()">🔄 刷新</button>
+<table><thead><tr><th>#</th><th>名称</th><th>描述</th><th>动作</th><th>状态</th><th>操作</th></tr></thead><tbody id="nlp-body"></tbody></table>
+</div></div>
+
+<!-- 审计日志 -->
+<div id="tab-logs" class="tab-content">
+<div class="card">
+<h2>📄 审计日志</h2>
+<button class="btn btn-refresh" onclick="loadLogs()">🔄 刷新</button>
+<pre id="log-content"></pre>
+</div></div>
+
+<!-- 会话监控 -->
+<div id="tab-sessions" class="tab-content">
+<div class="card">
+<h2>📊 会话监控</h2>
+<button class="btn btn-refresh" onclick="loadSessions()">🔄 刷新</button>
+<table><thead><tr><th>会话ID</th><th>风险积分</th><th>状态</th></tr></thead><tbody id="sessions-body"></tbody></table>
+</div></div>
+
+<script>
+function showTab(n){
+document.querySelectorAll('.tab-content').forEach(e=>e.classList.remove('active'));
+document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
+document.getElementById('tab-'+n).classList.add('active');
+document.querySelector('.tab[onclick="showTab(\''+n+'\')"]').classList.add('active');
+if(n==='rules')loadRules();
+if(n==='whitelist')loadWhitelist();
+if(n==='nlp')loadNLPRules();
+if(n==='logs')loadLogs();
+if(n==='sessions')loadSessions();
+}
+
+function loadRules(){
+fetch('/admin/api/rules').then(r=>r.json()).then(d=>{
+var t=document.getElementById('rules-body');t.innerHTML='';
+d.rules.forEach(function(r,i){
+var tr=document.createElement('tr');
+tr.innerHTML='<td>'+(i+1)+'</td><td>'+r.type+'</td><td>'+r.pattern+'</td><td>'+r.reason+'</td><td><button class="btn btn-delete" onclick="deleteRule('+i+')">删除</button></td>';
+t.appendChild(tr);
+});
+});
+}
+function deleteRule(i){if(!confirm('确定删除？'))return;fetch('/admin/api/rules/'+i,{method:'DELETE'}).then(function(){loadRules();});}
+function addRule(){var p=prompt('请输入关键词：');if(!p)return;fetch('/admin/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'keyword',pattern:p,reason:'命中关键词: '+p})}).then(function(){loadRules();});}
+
+function loadWhitelist(){
+fetch('/admin/api/whitelist').then(r=>r.json()).then(function(d){
+var t=document.getElementById('whitelist-body');t.innerHTML='';
+d.whitelist.forEach(function(tool,i){
+var tr=document.createElement('tr');
+tr.innerHTML='<td>'+(i+1)+'</td><td>'+tool+'</td><td><button class="btn btn-delete" onclick="deleteWhitelist('+i+')">删除</button></td>';
+t.appendChild(tr);
+});
+});
+}
+function deleteWhitelist(i){if(!confirm('确定删除？'))return;fetch('/admin/api/whitelist/'+i,{method:'DELETE'}).then(function(){loadWhitelist();});}
+function addWhitelist(){var t=prompt('请输入工具名称：');if(!t)return;fetch('/admin/api/whitelist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:t})}).then(function(){loadWhitelist();});}
+
+function loadNLPRules(){
+fetch('/admin/api/nlp-rules').then(r=>r.json()).then(function(d){
+var t=document.getElementById('nlp-body');t.innerHTML='';
+if(!d.rules||d.rules.length===0){t.innerHTML='<tr><td colspan="6" style="text-align:center;color:#999;">暂无规则</td></tr>';return;}
+d.rules.forEach(function(r,i){
+var tr=document.createElement('tr');
+var statusText=r.enabled?'启用':'禁用';
+var statusClass=r.enabled?'status-enabled':'status-disabled';
+var actionLabel=r.action==='block'?'拦截':r.action==='desensitize'?'脱敏':r.action==='allow'?'放行':'警告';
+tr.innerHTML='<td>'+(i+1)+'</td><td>'+r.name+'</td><td>'+r.description+'</td><td>'+actionLabel+'</td><td class="'+statusClass+'">'+statusText+'</td><td><button class="btn btn-toggle" onclick="toggleNLPRule('+i+')">切换</button><button class="btn btn-delete" onclick="deleteNLPRule('+i+')">删除</button></td>';
+t.appendChild(tr);
+});
+});
+}
+function deleteNLPRule(i){if(!confirm('确定删除？'))return;fetch('/admin/api/nlp-rules/'+i,{method:'DELETE'}).then(function(){loadNLPRules();});}
+function toggleNLPRule(i){fetch('/admin/api/nlp-rules/'+i+'/toggle',{method:'PUT'}).then(function(){loadNLPRules();});}
+function addNLPRule(){
+var name=prompt('请输入规则名称：');if(!name)return;
+var desc=prompt('请输入规则描述：');if(!desc)return;
+var action=prompt('请输入动作（block/desensitize/allow/warning）','block');if(!action)return;
+fetch('/admin/api/nlp-rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,description:desc,action:action})}).then(function(){loadNLPRules();});
+}
+
+function loadLogs(){fetch('/admin/api/logs').then(r=>r.text()).then(d=>{document.getElementById('log-content').textContent=d||'暂无日志';});}
+
+function loadSessions(){
+fetch('/admin/api/sessions').then(r=>r.json()).then(function(d){
+var t=document.getElementById('sessions-body');t.innerHTML='';
+if(!d.sessions||d.sessions.length===0){t.innerHTML='<tr><td colspan="3" style="text-align:center;color:#999;">暂无会话</td></tr>';return;}
+d.sessions.forEach(function(s){
+var tr=document.createElement('tr');
+var c=s.score>=80?'status-danger':s.score>=60?'status-warning':'status-ok';
+tr.innerHTML='<td>'+s.id+'</td><td>'+s.score+'</td><td class="'+c+'">'+s.status+'</td>';
+t.appendChild(tr);
+});
+});
+}
+
+loadRules();
+loadNLPRules();
+setInterval(loadSessions,5000);
+</script>
+</body>
+</html>

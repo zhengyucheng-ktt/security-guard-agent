@@ -1,0 +1,18 @@
+[
+  {
+    "id": "nlp_1",
+    "name": "越狱检测",
+    "description": "检测用户试图获取系统提示词、底层规则、敏感配置",
+    "action": "block",
+    "enabled": true,
+    "created_at": "2026-08-16 16:59:24"
+  },
+  {
+    "id": "nlp_2",
+    "name": "权限绕过检测",
+    "description": "检测用户试图绕过权限限制、获取管理员权限",
+    "action": "block",
+    "enabled": true,
+    "created_at": "2026-08-16 16:59:24"
+  }
+]

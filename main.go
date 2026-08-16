@@ -1,10 +1,8 @@
 package main
-
-// ============================================================
-
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -18,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
-
 
 // ============================================================
 // 异步日志
@@ -36,6 +33,8 @@ type logEntry struct {
 	Reason     string
 	Score      int
 }
+
+// ============================================================
 
 
 // ============================================================
@@ -84,7 +83,20 @@ type Rule struct {
 }
 
 // ============================================================
-// 全局变量（含 Redis 降级缓存）
+// 自然语言规则
+// ============================================================
+
+type NLPRule struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Action      string `json:"action"` // block / desensitize / allow / warning
+	Enabled     bool   `json:"enabled"`
+	CreatedAt   string `json:"created_at"`
+}
+
+// ============================================================
+// 全局变量
 // ============================================================
 
 var (
@@ -97,6 +109,9 @@ var (
 	memoryCache   = make(map[string]int)
 	cacheMutex    sync.RWMutex
 	useMemoryMode bool
+
+	// 自然语言规则
+	nlpRules []NLPRule
 )
 
 // ============================================================
@@ -291,6 +306,83 @@ func desensitizeContent(content string) string {
 }
 
 // ============================================================
+// 自然语言规则引擎
+// ============================================================
+
+// 保存自然语言规则到文件
+func saveNLPRules() error {
+	data, err := json.MarshalIndent(nlpRules, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile("nlp_rules.json", data, 0644)
+}
+
+// 加载自然语言规则
+func loadNLPRules() {
+	data, err := os.ReadFile("nlp_rules.json")
+	if err != nil {
+		log.Println("未找到 nlp_rules.json，使用默认规则")
+		// 添加默认规则示例
+		nlpRules = []NLPRule{
+			{
+				ID:          "nlp_1",
+				Name:        "越狱检测",
+				Description: "检测用户试图获取系统提示词、底层规则、敏感配置",
+				Action:      "block",
+				Enabled:     true,
+				CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+			},
+			{
+				ID:          "nlp_2",
+				Name:        "权限绕过检测",
+				Description: "检测用户试图绕过权限限制、获取管理员权限",
+				Action:      "block",
+				Enabled:     true,
+				CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+			},
+		}
+		saveNLPRules()
+		return
+	}
+	json.Unmarshal(data, &nlpRules)
+}
+
+// 提取关键词
+func extractKeywords(description string) []string {
+	keywords := []string{}
+	parts := strings.FieldsFunc(description, func(r rune) bool {
+		return r == '，' || r == ',' || r == '、' || r == ' ' || r == '；' || r == ';'
+	})
+	for _, p := range parts {
+		if len(p) >= 2 {
+			keywords = append(keywords, p)
+		}
+	}
+	return keywords
+}
+
+// 匹配自然语言规则（快速关键词匹配版）
+func matchNLPRule(content string) (bool, string, string) {
+	contentLower := strings.ToLower(content)
+	log.Printf("🔍 匹配内容: %s", contentLower)          // ← 新增
+	for _, rule := range nlpRules {
+		if !rule.Enabled {
+			continue
+		}
+		keywords := extractKeywords(rule.Description)
+		log.Printf("🔍 规则 %s 的关键词: %v", rule.Name, keywords)  // ← 新增
+		for _, kw := range keywords {
+			if strings.Contains(contentLower, strings.ToLower(kw)) {
+				log.Printf("🔍 关键词匹配: %s → 规则: %s", kw, rule.Name)
+				return true, rule.Action, rule.Name
+			}
+		}
+	}
+	log.Printf("❌ 未匹配任何规则")  // ← 新增
+	return false, "", ""
+}
+// ============================================================
 // 核心函数
 // ============================================================
 
@@ -378,7 +470,7 @@ func saveWhitelist() error {
 }
 
 // ============================================================
-// 异步日志（写入队列，不阻塞主流程）
+// 异步日志
 // ============================================================
 
 func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, reason string, score int) {
@@ -394,7 +486,6 @@ func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, 
 		Score:      score,
 	}:
 	default:
-		// 队列满了，丢弃日志，不影响业务
 	}
 }
 
@@ -419,7 +510,7 @@ func startLogWorker() {
 }
 
 // ============================================================
-// 会话积分（Redis + 内存降级）
+// 会话积分
 // ============================================================
 
 func getSessionScore(sessionID string) (int, error) {
@@ -554,26 +645,48 @@ func guardHandler(c *gin.Context) {
 	decision := "allow"
 	riskLevel := "low"
 
+	// ===== 1. 先检查自然语言规则 =====
+	matched, action, ruleName := matchNLPRule(req.Content)
+	if matched && decision == "allow" {
+		switch action {
+		case "block":
+			decision = "block"
+			riskLevel = "high"
+			blockReason = fmt.Sprintf("命中自然语言规则: %s", ruleName)
+			delta = SCORE_SENSITIVE
+		case "warning":
+			riskLevel = "medium"
+			resp.SessionStatus = "警告"
+		case "allow":
+			// 放行
+		default:
+			decision = "block"
+			blockReason = fmt.Sprintf("命中自然语言规则: %s", ruleName)
+			delta = SCORE_SENSITIVE
+		}
+	}
+
+	// ===== 2. 按 action_type 执行检测 =====
 	switch req.ActionType {
 	case "user_input":
 		ok, reason, scoreDelta := checkInput(req.Content)
-		if !ok {
+		if !ok && decision == "allow" {
 			blockReason = reason
 			delta = scoreDelta
 			decision = "block"
 			riskLevel = "high"
-		} else {
+		} else if decision == "allow" {
 			delta = SCORE_NORMAL
 		}
 	case "tool_call":
-		if !checkTool(req.ToolName) {
+		if !checkTool(req.ToolName) && decision == "allow" {
 			blockReason = fmt.Sprintf("工具 %s 不在白名单中", req.ToolName)
 			delta = SCORE_SENSITIVE
 			decision = "block"
 			riskLevel = "high"
 			break
 		}
-		if len(req.ToolParams) > 0 {
+		if len(req.ToolParams) > 0 && decision == "allow" {
 			ok, reason, scoreDelta := checkParams(req.ToolParams)
 			if !ok {
 				blockReason = reason
@@ -583,7 +696,9 @@ func guardHandler(c *gin.Context) {
 				break
 			}
 		}
-		delta = SCORE_NORMAL
+		if decision == "allow" {
+			delta = SCORE_NORMAL
+		}
 	case "output":
 		if req.OutputContent == "" {
 			c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: ""})
@@ -593,10 +708,13 @@ func guardHandler(c *gin.Context) {
 		c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
 		return
 	default:
-		delta = SCORE_NORMAL
+		if decision == "allow" {
+			delta = SCORE_NORMAL
+		}
 	}
 
-	if req.SessionID != "" {
+	// ===== 3. 多轮风险累积 =====
+	if req.SessionID != "" && decision != "block" {
 		newScore, err := updateSessionScore(req.SessionID, delta)
 		if err != nil {
 			log.Printf("⚠️ 积分更新失败: %v", err)
@@ -746,6 +864,60 @@ func adminGetSessions(c *gin.Context) {
 }
 
 // ============================================================
+// 自然语言规则 API
+// ============================================================
+
+func adminGetNLPRules(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"rules": nlpRules})
+}
+
+func adminAddNLPRule(c *gin.Context) {
+	var req struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Action      string `json:"action"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+
+	rule := NLPRule{
+		ID:          fmt.Sprintf("nlp_%d", len(nlpRules)+1),
+		Name:        req.Name,
+		Description: req.Description,
+		Action:      req.Action,
+		Enabled:     true,
+		CreatedAt:   time.Now().Format("2006-01-02 15:04:05"),
+	}
+	nlpRules = append(nlpRules, rule)
+	saveNLPRules()
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "rule": rule})
+}
+
+func adminDeleteNLPRule(c *gin.Context) {
+	index, err := strconv.Atoi(c.Param("index"))
+	if err != nil || index < 0 || index >= len(nlpRules) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid index"})
+		return
+	}
+	nlpRules = append(nlpRules[:index], nlpRules[index+1:]...)
+	saveNLPRules()
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func adminToggleNLPRule(c *gin.Context) {
+	index, err := strconv.Atoi(c.Param("index"))
+	if err != nil || index < 0 || index >= len(nlpRules) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid index"})
+		return
+	}
+	nlpRules[index].Enabled = !nlpRules[index].Enabled
+	saveNLPRules()
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "enabled": nlpRules[index].Enabled})
+}
+
+// ============================================================
 // 主函数
 // ============================================================
 
@@ -755,7 +927,10 @@ func main() {
 	// 启动异步日志 worker
 	startLogWorker()
 
-	// 初始化 Redis（带降级）
+	// 加载自然语言规则
+	loadNLPRules()
+
+	// 初始化 Redis
 	redisClient = redis.NewClient(&redis.Options{
 		Addr:         "172.19.63.110:6379",
 		Password:     "",
@@ -767,7 +942,6 @@ func main() {
 		WriteTimeout: 2 * time.Second,
 	})
 
-	// 带超时的连接测试
 	ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
@@ -786,9 +960,11 @@ func main() {
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 
+	// 核心 API
 	r.POST("/v1/guard", guardHandler)
 	r.GET("/health", healthHandler)
 
+	// 可视化后台
 	r.GET("/admin", adminIndex)
 	r.GET("/admin/api/rules", adminGetRules)
 	r.POST("/admin/api/rules", adminAddRule)
@@ -799,7 +975,14 @@ func main() {
 	r.GET("/admin/api/logs", adminGetLogs)
 	r.GET("/admin/api/sessions", adminGetSessions)
 
+	// 自然语言规则 API
+	r.GET("/admin/api/nlp-rules", adminGetNLPRules)
+	r.POST("/admin/api/nlp-rules", adminAddNLPRule)
+	r.DELETE("/admin/api/nlp-rules/:index", adminDeleteNLPRule)
+	r.PUT("/admin/api/nlp-rules/:index/toggle", adminToggleNLPRule)
+
 	log.Println("🚀 Guard server starting on :8080")
 	log.Println("📊 管理后台: http://localhost:8080/admin")
+	log.Println("🧠 自然语言规则: http://localhost:8080/admin (新增 NLP 标签页)")
 	r.Run(":8080")
 }
