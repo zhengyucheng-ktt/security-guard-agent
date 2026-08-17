@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 	"time"
-
+ "golang.org/x/time/rate"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
@@ -112,8 +112,25 @@ var (
 
 	// 自然语言规则
 	nlpRules []NLPRule
-)
+       
+        // 频次检测
+	limiters     = make(map[string]*rate.Limiter)
+	limiterMutex sync.Mutex
+        // ===== 动态脱敏配置 =====
 
+       desensitizePolicies []DesensitizePolicy
+       policyMutex         sync.RWMutex
+)
+// ============================================================
+// 动态脱敏配置
+// ============================================================
+
+type DesensitizePolicy struct {
+    Role        string   `json:"role"`
+    Level       string   `json:"level"`
+    Fields      []string `json:"fields"`
+    Description string   `json:"description"`
+}
 // ============================================================
 // 敏感参数
 // ============================================================
@@ -239,72 +256,124 @@ func desensitizeAddress(addr string) string {
 // 主脱敏函数
 // ============================================================
 
-func desensitizeContent(content string) string {
-	log.Printf("开始脱敏: [%s]", content)
-	result := content
+func desensitizeContent(content string, userID string) string {
+    log.Printf("开始动态脱敏: [%s], user=%s", content, userID)
+ level := getDesensitizeLevel(userID)
+    log.Printf("📊 脱敏级别: %s", level)  // ← 确认这行日志输出什么
 
-	licenseRegex := regexp.MustCompile(`91\d{14}[\dXx]`)
-	result = licenseRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeLicense(match)
-	})
+    // 获取用户脱敏级别
+    level = getDesensitizeLevel(userID)
+    log.Printf("📊 脱敏级别: %s", level)
 
-	plateRegex := regexp.MustCompile(`[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-HJ-NP-Z0-9]{4,5}`)
-	result = plateRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizePlate(match)
-	})
+    // 如果是 admin 且级别为 full，返回原始内容
+    if level == "full" {
+        log.Printf("🔓 管理员完整权限，跳过脱敏")
+        return content
+    }
 
-	wechatRegex := regexp.MustCompile(`wxid_[a-zA-Z0-9_]+`)
-	result = wechatRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeWechat(match)
-	})
+    result := content
 
-	idRegex := regexp.MustCompile(`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`)
-	result = idRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeIDCard(match)
-	})
+    // 1. 营业执照
+    licenseRegex := regexp.MustCompile(`91\d{14}[\dXx]`)
+    result = licenseRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizeLicense(match)
+    })
 
-	phoneRegex := regexp.MustCompile(`1[3-9]\d{9}`)
-	result = phoneRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizePhone(match)
-	})
+    // 2. 车牌
+    plateRegex := regexp.MustCompile(`[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤青藏川宁琼使领][A-Z][A-HJ-NP-Z0-9]{4,5}`)
+    result = plateRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizePlate(match)
+    })
 
-	bankRegex := regexp.MustCompile(`[1-9]\d{11,18}`)
-	result = bankRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeBankCard(match)
-	})
+    // 3. 微信号
+    wechatRegex := regexp.MustCompile(`wxid_[a-zA-Z0-9_]+`)
+    result = wechatRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizeWechat(match)
+    })
 
-	emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
-	result = emailRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeEmail(match)
-	})
+    // 4. 身份证
+    idRegex := regexp.MustCompile(`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`)
+    result = idRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizeIDCard(match)
+    })
 
-	ipRegex := regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b`)
-	result = ipRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeIP(match)
-	})
+    // 5. 手机号
+    phoneRegex := regexp.MustCompile(`1[3-9]\d{9}`)
+    result = phoneRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizePhone(match)
+    })
 
-	nameRegex := regexp.MustCompile(`[《「"']?(?:姓名|名字|用户)[》」"']?[：:=\s]*[《「"']?([\p{Han}·]{1,8})[》」"']?`)
-	result = nameRegex.ReplaceAllStringFunc(result, func(match string) string {
-		sub := nameRegex.FindStringSubmatch(match)
-		if len(sub) != 2 {
-			return match
-		}
-		name := sub[1]
-		if name == "信息" || name == "ID" || name == "id" || name == "姓名" || name == "名字" {
-			return match
-		}
-		return strings.Replace(match, name, desensitizeName(name), 1)
-	})
+    // 6. 银行卡
+    bankRegex := regexp.MustCompile(`[1-9]\d{11,18}`)
+    result = bankRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***"
+        }
+        return desensitizeBankCard(match)
+    })
 
-	addrRegex := regexp.MustCompile(`([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)[\p{Han}]{2,30}`)
-	result = addrRegex.ReplaceAllStringFunc(result, func(match string) string {
-		return desensitizeAddress(match)
-	})
+    // 7. 邮箱
+    emailRegex := regexp.MustCompile(`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`)
+    result = emailRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***@***.***"
+        }
+        return desensitizeEmail(match)
+    })
 
-	log.Printf("脱敏完成: [%s]", result)
-	return result
+    // 8. IP
+    ipRegex := regexp.MustCompile(`\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b`)
+    result = ipRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "***.***.***.***"
+        }
+        return desensitizeIP(match)
+    })
+
+    // 9. 姓名
+    nameRegex := regexp.MustCompile(`[《「"']?(?:姓名|名字|用户)[》」"']?[：:=\s]*[《「"']?([\p{Han}·]{1,8})[》」"']?`)
+    result = nameRegex.ReplaceAllStringFunc(result, func(match string) string {
+        sub := nameRegex.FindStringSubmatch(match)
+        if len(sub) != 2 {
+            return match
+        }
+        name := sub[1]
+        if name == "信息" || name == "ID" || name == "id" || name == "姓名" || name == "名字" {
+            return match
+        }
+        if level == "minimal" {
+            return strings.Replace(match, name, "***", 1)
+        }
+        return strings.Replace(match, name, desensitizeName(name), 1)
+    })
+
+    // 10. 地址
+    addrRegex := regexp.MustCompile(`([\p{Han}]{2,5}省|[\p{Han}]{2,5}自治区|[\p{Han}]{2,5}市|[\p{Han}]{2,5}区|[\p{Han}]{2,5}县)[\p{Han}]{2,30}`)
+    result = addrRegex.ReplaceAllStringFunc(result, func(match string) string {
+        if level == "minimal" {
+            return "****"
+        }
+        return desensitizeAddress(match)
+    })
+
+    log.Printf("动态脱敏完成: [%s]", result)
+    return result
 }
-
 // ============================================================
 // 自然语言规则引擎
 // ============================================================
@@ -381,6 +450,84 @@ func matchNLPRule(content string) (bool, string, string) {
 	}
 	log.Printf("❌ 未匹配任何规则")  // ← 新增
 	return false, "", ""
+}
+// ============================================================
+// 动态脱敏
+// ============================================================
+
+// 加载动态脱敏策略
+func loadDesensitizePolicies() {
+    data, err := os.ReadFile("desensitize_policies.json")
+    if err != nil {
+        log.Println("未找到 desensitize_policies.json，使用默认策略")
+        desensitizePolicies = []DesensitizePolicy{
+            {
+                Role:        "admin",
+                Level:       "full",
+                Fields:      []string{"phone", "id_card", "email", "bank_card", "address"},
+                Description: "管理员查看完整数据",
+            },
+            {
+                Role:        "user",
+                Level:       "partial",
+                Fields:      []string{"phone", "id_card", "email", "bank_card", "address"},
+                Description: "普通用户查看脱敏数据",
+            },
+            {
+                Role:        "guest",
+                Level:       "minimal",
+                Fields:      []string{"phone", "id_card", "email", "bank_card", "address"},
+                Description: "访客仅查看部分脱敏数据",
+            },
+        }
+        saveDesensitizePolicies()
+        return
+    }
+    json.Unmarshal(data, &desensitizePolicies)
+}
+
+func saveDesensitizePolicies() error {
+    data, err := json.MarshalIndent(desensitizePolicies, "", "  ")
+    if err != nil {
+        return err
+    }
+    return os.WriteFile("desensitize_policies.json", data, 0644)
+}
+
+func getUserRole(userID string) string {
+    if strings.HasPrefix(userID, "admin") {
+        return "admin"
+    }
+    return "user"
+}
+
+func getDesensitizeLevel(userID string) string {
+    role := getUserRole(userID)
+    policyMutex.RLock()
+    defer policyMutex.RUnlock()
+    for _, p := range desensitizePolicies {
+        if p.Role == role {
+            return p.Level
+        }
+    }
+    return "partial"
+}
+// ============================================================
+// 频次异常检测
+// ============================================================
+
+func getLimiter(sessionID string) *rate.Limiter {
+	limiterMutex.Lock()
+	defer limiterMutex.Unlock()
+
+	if limiter, ok := limiters[sessionID]; ok {
+		return limiter
+	}
+
+	// 每秒 10 次，突发容量 3 次
+	limiter := rate.NewLimiter(rate.Limit(10), 3)
+	limiters[sessionID] = limiter
+	return limiter
 }
 // ============================================================
 // 核心函数
@@ -633,19 +780,39 @@ func checkTool(toolName string) bool {
 // ============================================================
 
 func guardHandler(c *gin.Context) {
+	// ===== 零信任：默认拒绝 =====
+	decision := "block"
+	riskLevel := "high"
+	blockReason := "默认拒绝，需逐层验证通过"
+
 	var req GuardRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
 
+	// ===== 频次异常检测 =====
+	if req.SessionID != "" {
+		 log.Printf("🔍 限流检查: session=%s", req.SessionID)
+                  if !getLimiter(req.SessionID).Allow() {
+			decision = "block"
+			riskLevel = "high"
+			blockReason = "请求频率过高，触发限流"
+			c.JSON(http.StatusOK, GuardResponse{
+				Decision:    decision,
+				RiskLevel:   riskLevel,
+				BlockReason: blockReason,
+			})
+			return
+		}
+	}
+
 	var resp GuardResponse
 	var delta int
-	var blockReason string
-	decision := "allow"
-	riskLevel := "low"
+	decision = "allow"
+	riskLevel = "low"
 
-	// ===== 1. 先检查自然语言规则 =====
+	// ===== 1. 自然语言规则 =====
 	matched, action, ruleName := matchNLPRule(req.Content)
 	if matched && decision == "allow" {
 		switch action {
@@ -704,8 +871,8 @@ func guardHandler(c *gin.Context) {
 			c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: ""})
 			return
 		}
-		safe := desensitizeContent(req.OutputContent)
-		c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
+		safe := desensitizeContent(req.OutputContent, req.UserID)		
+c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
 		return
 	default:
 		if decision == "allow" {
@@ -752,7 +919,6 @@ func guardHandler(c *gin.Context) {
 	writeAuditLog(req.SessionID, req.UserID, req.ActionType, req.Content, resp.Decision, resp.RiskLevel, resp.BlockReason, resp.CurrentScore)
 	c.JSON(http.StatusOK, resp)
 }
-
 func healthHandler(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
@@ -929,6 +1095,7 @@ func main() {
 
 	// 加载自然语言规则
 	loadNLPRules()
+loadDesensitizePolicies()
 
 	// 初始化 Redis
 	redisClient = redis.NewClient(&redis.Options{
