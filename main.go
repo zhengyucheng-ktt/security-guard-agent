@@ -12,11 +12,49 @@ import (
 	"strings"
 	"sync"
 	"time"
+         "github.com/golang-jwt/jwt/v5"
  "golang.org/x/time/rate"
 	"github.com/gin-gonic/gin"
 	"github.com/redis/go-redis/v9"
 )
+// ============================================================
+// 系统配置
+// ============================================================
 
+type SystemConfig struct {
+    EnableDifferentialPrivacy bool   `json:"enable_differential_privacy"`
+    RateLimit                 int    `json:"rate_limit"`
+    DefaultLevel              string `json:"default_level"`
+    SessionTimeout            int    `json:"session_timeout"`
+}
+// ============================================================
+// 水印配置
+// ============================================================
+
+const (
+    ZERO_WIDTH_SPACE    = "\u200B"
+    ZERO_WIDTH_NBSP     = "\uFEFF"
+)
+
+func encodeToZeroWidth(data string) string {
+    result := ""
+    for _, ch := range data {
+        for i := 7; i >= 0; i-- {
+            bit := (ch >> uint(i)) & 1
+            if bit == 1 {
+                result += ZERO_WIDTH_SPACE
+            } else {
+                result += ZERO_WIDTH_NBSP
+            }
+        }
+    }
+    return result
+}
+
+func addWatermark(content, sessionID, userID string) string {
+    watermarkData := fmt.Sprintf("%s|%s|%d", sessionID, userID, time.Now().Unix())
+    return content + encodeToZeroWidth(watermarkData)
+}
 // ============================================================
 // 异步日志
 // ============================================================
@@ -33,13 +71,45 @@ type logEntry struct {
 	Reason     string
 	Score      int
 }
-
+// 从内容中提取水印
+func extractWatermark(content string) string {
+    var result strings.Builder
+    for _, ch := range content {
+        if ch == '\u200B' {
+            result.WriteString("1")
+        } else if ch == '\uFEFF' {
+            result.WriteString("0")
+        }
+    }
+    // 二进制转字符串
+    binaryStr := result.String()
+    if len(binaryStr)%8 != 0 {
+        return ""
+    }
+    var bytes []byte
+    for i := 0; i < len(binaryStr); i += 8 {
+        var b byte
+        for j := 0; j < 8; j++ {
+            if binaryStr[i+j] == '1' {
+                b |= 1 << uint(7-j)
+            }
+        }
+        bytes = append(bytes, b)
+    }
+    return string(bytes)
+}
 // ============================================================
 
 
 // ============================================================
 // 配置
 // ============================================================
+// ============================================================
+// 配置
+// ============================================================
+
+var jwtSecret = []byte("your-secret-key-change-in-production")   // ← 添加这一行
+
 
 const (
 	THRESHOLD_WARNING   = 30
@@ -120,6 +190,9 @@ var (
 
        desensitizePolicies []DesensitizePolicy
        policyMutex         sync.RWMutex
+           // ===== 系统配置 =====
+    systemConfig SystemConfig
+    configMutex  sync.RWMutex
 )
 // ============================================================
 // 动态脱敏配置
@@ -512,23 +585,32 @@ func getDesensitizeLevel(userID string) string {
     }
     return "partial"
 }
+func getLimiter(sessionID string) *rate.Limiter {
+    limiterMutex.Lock()
+    defer limiterMutex.Unlock()
+
+    if limiter, ok := limiters[sessionID]; ok {
+        return limiter
+    }
+
+    // 从配置读取限流阈值
+    configMutex.RLock()
+    rateLimit := systemConfig.RateLimit
+    configMutex.RUnlock()
+
+    if rateLimit <= 0 {
+        rateLimit = 10
+    }
+
+    limiter := rate.NewLimiter(rate.Limit(rateLimit), 3)
+    limiters[sessionID] = limiter
+    return limiter
+}
 // ============================================================
 // 频次异常检测
 // ============================================================
 
-func getLimiter(sessionID string) *rate.Limiter {
-	limiterMutex.Lock()
-	defer limiterMutex.Unlock()
 
-	if limiter, ok := limiters[sessionID]; ok {
-		return limiter
-	}
-
-	// 每秒 10 次，突发容量 3 次
-	limiter := rate.NewLimiter(rate.Limit(10), 3)
-	limiters[sessionID] = limiter
-	return limiter
-}
 // ============================================================
 // 核心函数
 // ============================================================
@@ -846,34 +928,59 @@ func guardHandler(c *gin.Context) {
 			delta = SCORE_NORMAL
 		}
 	case "tool_call":
-		if !checkTool(req.ToolName) && decision == "allow" {
-			blockReason = fmt.Sprintf("工具 %s 不在白名单中", req.ToolName)
-			delta = SCORE_SENSITIVE
-			decision = "block"
-			riskLevel = "high"
-			break
-		}
-		if len(req.ToolParams) > 0 && decision == "allow" {
-			ok, reason, scoreDelta := checkParams(req.ToolParams)
-			if !ok {
-				blockReason = reason
-				delta = scoreDelta
-				decision = "block"
-				riskLevel = "high"
-				break
-			}
-		}
-		if decision == "allow" {
-			delta = SCORE_NORMAL
-		}
-	case "output":
-		if req.OutputContent == "" {
-			c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: ""})
-			return
-		}
-		safe := desensitizeContent(req.OutputContent, req.UserID)		
-c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
-		return
+    // 1. 检查工具是否在白名单
+    if !checkTool(req.ToolName) {
+        blockReason = fmt.Sprintf("工具 %s 不在白名单中", req.ToolName)
+        delta = SCORE_SENSITIVE
+        decision = "block"
+        riskLevel = "high"
+        break
+    }
+
+    // 2. 参数清洗
+    req.ToolParams = sanitizeParams(req.ToolName, req.ToolParams)
+
+    // 3. 参数校验
+    if len(req.ToolParams) > 0 && decision == "allow" {
+        ok, reason, scoreDelta := checkParams(req.ToolParams)
+        if !ok {
+            blockReason = reason
+            delta = scoreDelta
+            decision = "block"
+            riskLevel = "high"
+            break
+        }
+    }
+
+    // 4. 生成 JWT 动态令牌
+    if decision == "allow" && req.SessionID != "" {
+        token, err := generateToolToken(req.SessionID, req.ToolName, req.UserID)
+        if err != nil {
+            log.Printf("⚠️ 生成令牌失败: %v", err)
+            blockReason = "工具调用令牌生成失败"
+            delta = SCORE_SENSITIVE
+            decision = "block"
+            riskLevel = "high"
+            break
+        }
+        log.Printf("🔑 生成工具令牌: %s... (有效期30秒)", token[:20])
+    }
+
+    if decision == "allow" {
+        delta = SCORE_NORMAL
+    }
+          case "output":
+    if req.OutputContent == "" {
+        c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: ""})
+        return
+    }
+    safe := desensitizeContent(req.OutputContent, req.UserID)
+    if req.SessionID != "" {
+        safe = addWatermark(safe, req.SessionID, req.UserID)
+        log.Printf("💧 已添加水印: session=%s", req.SessionID)
+    }
+    c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
+    return
 	default:
 		if decision == "allow" {
 			delta = SCORE_NORMAL
@@ -1082,7 +1189,156 @@ func adminToggleNLPRule(c *gin.Context) {
 	saveNLPRules()
 	c.JSON(http.StatusOK, gin.H{"status": "ok", "enabled": nlpRules[index].Enabled})
 }
+// ============================================================
+// 系统配置加载/保存
+// ============================================================
 
+func loadSystemConfig() {
+    data, err := os.ReadFile("system_config.json")
+    if err != nil {
+        systemConfig = SystemConfig{
+            EnableDifferentialPrivacy: false,
+            RateLimit:                 10,
+            DefaultLevel:              "partial",
+            SessionTimeout:            30,
+        }
+        saveSystemConfig()
+        return
+    }
+    json.Unmarshal(data, &systemConfig)
+}
+
+func saveSystemConfig() error {
+    data, err := json.MarshalIndent(systemConfig, "", "  ")
+    if err != nil {
+        return err
+    }
+    return os.WriteFile("system_config.json", data, 0644)
+}
+// ============================================================
+// JWT 令牌管理
+// ============================================================
+
+// 生成工具调用令牌
+func generateToolToken(sessionID, toolName, userID string) (string, error) {
+    claims := jwt.MapClaims{
+        "session_id": sessionID,
+        "tool":       toolName,
+        "user_id":    userID,
+        "exp":        time.Now().Add(30 * time.Second).Unix(),
+        "iat":        time.Now().Unix(),
+    }
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+    return token.SignedString(jwtSecret)
+}
+
+// 验证工具调用令牌
+func validateToolToken(tokenString string) (bool, string, string) {
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+        }
+        return jwtSecret, nil
+    })
+
+    if err != nil {
+        return false, "", ""
+    }
+
+    if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+        sessionID, _ := claims["session_id"].(string)
+        toolName, _ := claims["tool"].(string)
+        return true, sessionID, toolName
+    }
+
+    return false, "", ""
+}
+// ============================================================
+// 参数清洗
+// ============================================================
+
+var allowedParamKeys = map[string][]string{
+    "/api/weather/query": {"city", "date"},
+    "/api/stock/info":    {"code", "market"},
+    "/api/news/list":     {"category", "limit"},
+}
+
+func sanitizeParams(toolName string, params map[string]interface{}) map[string]interface{} {
+    allowed, exists := allowedParamKeys[toolName]
+    if !exists {
+        return make(map[string]interface{})
+    }
+
+    cleaned := make(map[string]interface{})
+    for _, key := range allowed {
+        if val, ok := params[key]; ok {
+            cleaned[key] = val
+        }
+    }
+    return cleaned
+}
+
+// ============================================================
+// 系统配置 API
+// ============================================================
+
+func adminGetConfig(c *gin.Context) {
+    configMutex.RLock()
+    defer configMutex.RUnlock()
+    c.JSON(http.StatusOK, gin.H{"config": systemConfig})
+}
+
+func adminUpdateConfig(c *gin.Context) {
+    var config SystemConfig
+    if err := c.ShouldBindJSON(&config); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+        return
+    }
+    configMutex.Lock()
+    defer configMutex.Unlock()
+    systemConfig = config
+    if err := saveSystemConfig(); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+        return
+    }
+    log.Printf("🔧 配置已更新: 差分隐私=%v, 限流=%d, 脱敏级别=%s, 超时=%d分钟",
+        config.EnableDifferentialPrivacy, config.RateLimit, config.DefaultLevel, config.SessionTimeout)
+    c.JSON(http.StatusOK, gin.H{"status": "ok", "config": config})
+}
+// ============================================================
+// 水印提取 API（审计用）
+// ============================================================
+
+func adminExtractWatermark(c *gin.Context) {
+    var req struct {
+        Content string `json:"content"`
+    }
+    if err := c.ShouldBindJSON(&req); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+        return
+    }
+
+    if req.Content == "" {
+        c.JSON(http.StatusOK, gin.H{"watermark": "", "message": "内容为空"})
+        return
+    }
+
+    watermark := extractWatermark(req.Content)
+    if watermark == "" {
+        c.JSON(http.StatusOK, gin.H{"watermark": "", "message": "未检测到水印"})
+        return
+    }
+
+    // 解析水印数据：sessionID|userID|timestamp
+    parts := strings.Split(watermark, "|")
+    c.JSON(http.StatusOK, gin.H{
+        "watermark":  watermark,
+        "session_id": parts[0],
+        "user_id":    parts[1],
+        "timestamp":  parts[2],
+        "message":    "水印提取成功",
+    })
+}
 // ============================================================
 // 主函数
 // ============================================================
@@ -1096,10 +1352,10 @@ func main() {
 	// 加载自然语言规则
 	loadNLPRules()
 loadDesensitizePolicies()
-
+loadSystemConfig()
 	// 初始化 Redis
 	redisClient = redis.NewClient(&redis.Options{
-		Addr:         "172.19.63.110:6379",
+	Addr: "172.19.63.110:6379",
 		Password:     "",
 		DB:           0,
 		PoolSize:     10,
@@ -1147,9 +1403,14 @@ loadDesensitizePolicies()
 	r.POST("/admin/api/nlp-rules", adminAddNLPRule)
 	r.DELETE("/admin/api/nlp-rules/:index", adminDeleteNLPRule)
 	r.PUT("/admin/api/nlp-rules/:index/toggle", adminToggleNLPRule)
-
+        // 系统配置 API
+r.GET("/admin/api/config", adminGetConfig)
+r.PUT("/admin/api/config", adminUpdateConfig)
 	log.Println("🚀 Guard server starting on :8080")
 	log.Println("📊 管理后台: http://localhost:8080/admin")
 	log.Println("🧠 自然语言规则: http://localhost:8080/admin (新增 NLP 标签页)")
 	r.Run(":8080")
+        // ===== 水印提取 API（新增） =====
+    r.POST("/admin/api/extract-watermark", adminExtractWatermark)
+
 }
