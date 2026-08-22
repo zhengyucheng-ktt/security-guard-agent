@@ -77,10 +77,41 @@ pre{background:#f5f5f5;padding:10px;border-radius:4px;max-height:400px;overflow:
 <div class="card">
 <h2>📊 会话监控</h2>
 <button class="btn btn-refresh" onclick="loadSessions()">🔄 刷新</button>
-<table><thead><tr><th>会话ID</th><th>风险积分</th><th>状态</th></tr></thead><tbody id="sessions-body"></tbody></table>
+<table><thead><tr><th>会话ID</th><th>风险积分</th><th>状态</th><th>操作</th></tr></thead><tbody id="sessions-body"></tbody></table>
 </div></div>
 
 <script>
+// 管理员 Token：首次输入后保存在 sessionStorage
+var ADMIN_TOKEN = sessionStorage.getItem('admin_token');
+function ensureToken(){
+  if(!ADMIN_TOKEN){
+    ADMIN_TOKEN = prompt('请输入管理员 Token（见 admin_token.txt 或服务启动日志）：');
+    if(!ADMIN_TOKEN) return false;
+    sessionStorage.setItem('admin_token', ADMIN_TOKEN);
+  }
+  return true;
+}
+function ah(jsonBody){
+  var h = {'X-Admin-Token': ADMIN_TOKEN || ''};
+  if(jsonBody) h['Content-Type'] = 'application/json';
+  return h;
+}
+function apiFetch(url, opts){
+  if(!ensureToken()) return Promise.reject(new Error('缺少 Token'));
+  opts = opts || {};
+  opts.headers = Object.assign({}, opts.headers, ah(opts.method === 'POST' || opts.method === 'PUT'));
+  return fetch(url, opts).then(function(r){
+    if(r.status === 401){
+      sessionStorage.removeItem('admin_token');
+      ADMIN_TOKEN = null;
+      if(confirm('Token 无效或已过期，是否重新输入？')){
+        return apiFetch(url, opts);
+      }
+    }
+    return r;
+  });
+}
+
 function showTab(n){
 document.querySelectorAll('.tab-content').forEach(e=>e.classList.remove('active'));
 document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));
@@ -94,7 +125,7 @@ if(n==='sessions')loadSessions();
 }
 
 function loadRules(){
-fetch('/admin/api/rules').then(r=>r.json()).then(d=>{
+apiFetch('/admin/api/rules').then(r=>r.json()).then(d=>{
 var t=document.getElementById('rules-body');t.innerHTML='';
 d.rules.forEach(function(r,i){
 var tr=document.createElement('tr');
@@ -103,11 +134,11 @@ t.appendChild(tr);
 });
 });
 }
-function deleteRule(i){if(!confirm('确定删除？'))return;fetch('/admin/api/rules/'+i,{method:'DELETE'}).then(function(){loadRules();});}
-function addRule(){var p=prompt('请输入关键词：');if(!p)return;fetch('/admin/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'keyword',pattern:p,reason:'命中关键词: '+p})}).then(function(){loadRules();});}
+function deleteRule(i){if(!confirm('确定删除？'))return;apiFetch('/admin/api/rules/'+i,{method:'DELETE'}).then(function(){loadRules();});}
+function addRule(){var p=prompt('请输入关键词：');if(!p)return;apiFetch('/admin/api/rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({type:'keyword',pattern:p,reason:'命中关键词: '+p})}).then(function(){loadRules();});}
 
 function loadWhitelist(){
-fetch('/admin/api/whitelist').then(r=>r.json()).then(function(d){
+apiFetch('/admin/api/whitelist').then(r=>r.json()).then(function(d){
 var t=document.getElementById('whitelist-body');t.innerHTML='';
 d.whitelist.forEach(function(tool,i){
 var tr=document.createElement('tr');
@@ -116,11 +147,11 @@ t.appendChild(tr);
 });
 });
 }
-function deleteWhitelist(i){if(!confirm('确定删除？'))return;fetch('/admin/api/whitelist/'+i,{method:'DELETE'}).then(function(){loadWhitelist();});}
-function addWhitelist(){var t=prompt('请输入工具名称：');if(!t)return;fetch('/admin/api/whitelist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:t})}).then(function(){loadWhitelist();});}
+function deleteWhitelist(i){if(!confirm('确定删除？'))return;apiFetch('/admin/api/whitelist/'+i,{method:'DELETE'}).then(function(){loadWhitelist();});}
+function addWhitelist(){var t=prompt('请输入工具名称：');if(!t)return;apiFetch('/admin/api/whitelist',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({tool:t})}).then(function(){loadWhitelist();});}
 
 function loadNLPRules(){
-fetch('/admin/api/nlp-rules').then(r=>r.json()).then(function(d){
+apiFetch('/admin/api/nlp-rules').then(r=>r.json()).then(function(d){
 var t=document.getElementById('nlp-body');t.innerHTML='';
 if(!d.rules||d.rules.length===0){t.innerHTML='<tr><td colspan="6" style="text-align:center;color:#999;">暂无规则</td></tr>';return;}
 d.rules.forEach(function(r,i){
@@ -133,33 +164,39 @@ t.appendChild(tr);
 });
 });
 }
-function deleteNLPRule(i){if(!confirm('确定删除？'))return;fetch('/admin/api/nlp-rules/'+i,{method:'DELETE'}).then(function(){loadNLPRules();});}
-function toggleNLPRule(i){fetch('/admin/api/nlp-rules/'+i+'/toggle',{method:'PUT'}).then(function(){loadNLPRules();});}
+function deleteNLPRule(i){if(!confirm('确定删除？'))return;apiFetch('/admin/api/nlp-rules/'+i,{method:'DELETE'}).then(function(){loadNLPRules();});}
+function toggleNLPRule(i){apiFetch('/admin/api/nlp-rules/'+i+'/toggle',{method:'PUT'}).then(function(){loadNLPRules();});}
 function addNLPRule(){
 var name=prompt('请输入规则名称：');if(!name)return;
 var desc=prompt('请输入规则描述：');if(!desc)return;
 var action=prompt('请输入动作（block/desensitize/allow/warning）','block');if(!action)return;
-fetch('/admin/api/nlp-rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,description:desc,action:action})}).then(function(){loadNLPRules();});
+apiFetch('/admin/api/nlp-rules',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:name,description:desc,action:action})}).then(function(){loadNLPRules();});
 }
 
-function loadLogs(){fetch('/admin/api/logs').then(r=>r.text()).then(d=>{document.getElementById('log-content').textContent=d||'暂无日志';});}
+function loadLogs(){apiFetch('/admin/api/logs').then(r=>r.text()).then(d=>{document.getElementById('log-content').textContent=d||'暂无日志';});}
 
 function loadSessions(){
-fetch('/admin/api/sessions').then(r=>r.json()).then(function(d){
+apiFetch('/admin/api/sessions').then(r=>r.json()).then(function(d){
 var t=document.getElementById('sessions-body');t.innerHTML='';
-if(!d.sessions||d.sessions.length===0){t.innerHTML='<tr><td colspan="3" style="text-align:center;color:#999;">暂无会话</td></tr>';return;}
+if(!d.sessions||d.sessions.length===0){t.innerHTML='<tr><td colspan="4" style="text-align:center;color:#999;">暂无会话</td></tr>';return;}
 d.sessions.forEach(function(s){
 var tr=document.createElement('tr');
 var c=s.score>=80?'status-danger':s.score>=60?'status-warning':'status-ok';
-tr.innerHTML='<td>'+s.id+'</td><td>'+s.score+'</td><td class="'+c+'">'+s.status+'</td>';
+tr.innerHTML='<td>'+s.id+'</td><td>'+s.score+'</td><td class="'+c+'">'+s.status+'</td><td><button class="btn btn-add" onclick="resetSession(\''+s.id+'\')">解封</button></td>';
 t.appendChild(tr);
 });
 });
 }
+function resetSession(id){
+if(!confirm('确定解封会话 '+id+' ？（将重置其风险积分与限流状态）'))return;
+apiFetch('/admin/api/sessions/'+encodeURIComponent(id)+'/reset',{method:'PUT'}).then(function(){loadSessions();});
+}
 
-loadRules();
-loadNLPRules();
-setInterval(loadSessions,5000);
+if(ensureToken()){
+  loadRules();
+  loadNLPRules();
+  setInterval(loadSessions,5000);
+}
 </script>
 </body>
 </html>

@@ -1,5 +1,14 @@
 # 审计日志（不提交到仓库）
 audit.log
+*.log
+
+# 运行时生成的密钥与 Token（不提交）
+.jwt_secret
+admin_token.txt
+
+# 会话积分持久化缓存（不提交）
+sessions_cache.json
+reputation_cache.json
 
 # Go 编译产物
 *.exe

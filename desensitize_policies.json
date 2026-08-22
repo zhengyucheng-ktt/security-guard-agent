@@ -1,0 +1,53 @@
+[
+  {
+    "role": "admin",
+    "level": "full",
+    "fields": [
+      "phone",
+      "id_card",
+      "email",
+      "bank_card",
+      "address",
+      "ip",
+      "name",
+      "license",
+      "plate",
+      "wechat"
+    ],
+    "description": "管理员查看完整数据"
+  },
+  {
+    "role": "user",
+    "level": "partial",
+    "fields": [
+      "phone",
+      "id_card",
+      "email",
+      "bank_card",
+      "address",
+      "ip",
+      "name",
+      "license",
+      "plate",
+      "wechat"
+    ],
+    "description": "普通用户查看脱敏数据（可在 fields 中裁剪需要脱敏的字段）"
+  },
+  {
+    "role": "guest",
+    "level": "minimal",
+    "fields": [
+      "phone",
+      "id_card",
+      "email",
+      "bank_card",
+      "address",
+      "ip",
+      "name",
+      "license",
+      "plate",
+      "wechat"
+    ],
+    "description": "访客仅查看部分脱敏数据"
+  }
+]
