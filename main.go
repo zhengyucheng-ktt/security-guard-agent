@@ -359,12 +359,12 @@ func getLimiter(sessionID string) *rate.Limiter {
 	}
 	if sl, ok := limiters[sessionID]; ok {
 		sl.lastUsed = time.Now()
-		// 配置热更新：按当前配置调整速率与突发
+		// 配置热更新：按当前配置调整速率与突发（burst 10 容忍一轮对话的 4 次调用）
 		sl.limiter.SetLimit(rate.Limit(rateLimit))
-		sl.limiter.SetBurst(3)
+		sl.limiter.SetBurst(10)
 		return sl.limiter
 	}
-	limiter := rate.NewLimiter(rate.Limit(rateLimit), 3)
+	limiter := rate.NewLimiter(rate.Limit(rateLimit), 10)
 	limiters[sessionID] = &sessionLimiter{limiter: limiter, lastUsed: time.Now()}
 	return limiter
 }
@@ -1297,6 +1297,25 @@ func adminGetSessionAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"session_id": sessionID, "records": records})
 }
 
+// 清空反刷评/限流/语境缓存（运维用：演示、误报恢复）
+func adminResetAntiBotCache(c *gin.Context) {
+	dupCacheMu.Lock()
+	dupCache = make(map[string]time.Time)
+	dupCacheMu.Unlock()
+	aggregateMu.Lock()
+	userLimiters = make(map[string]*sessionLimiter)
+	ipLimiters = make(map[string]*sessionLimiter)
+	aggregateMu.Unlock()
+	sessionCtxMu.Lock()
+	sessionContext = make(map[string]cacheEntry)
+	sessionCtxMu.Unlock()
+	limiterMutex.Lock()
+	limiters = make(map[string]*sessionLimiter)
+	limiterMutex.Unlock()
+	log.Println("🧹 反刷评/限流/语境缓存已清空")
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
 // ============================================================
 // 自然语言规则 API（含并发安全锁）
 // ============================================================
@@ -1632,6 +1651,7 @@ func setupRouter() *gin.Engine {
 	admin.PUT("/config", adminUpdateConfig)
 
 	admin.POST("/extract-watermark", adminExtractWatermark)
+	admin.POST("/anti-bot/reset", adminResetAntiBotCache)
 
 	return r
 }

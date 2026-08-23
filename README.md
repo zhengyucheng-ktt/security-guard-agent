@@ -34,6 +34,27 @@ curl http://localhost:8080/admin/api/rules -H "X-Admin-Token: <token>"
 
 JWT 密钥同理自动生成并持久化到 `.jwt_secret`（生产环境建议用 `JWT_SECRET` 环境变量注入）。
 
+## 黑箱接入（推荐给非技术用户）
+
+不懂内部机制也能接入：只需 `guard_sdk.py`，几行代码获得完整防护（输入审核 / 工具防护 / 输出脱敏水印），连 session/user 标识都不用管。
+
+```python
+from guard_sdk import Guard
+guard = Guard(api_key="你的密钥")        # 服务端 guard_api_key 为空则不用填
+
+# 方式一：一行包装你的 LLM（自动完成 输入审核→LLM→工具防护→输出审核）
+safe_llm = guard.wrap_llm(my_llm_function, execute_tool=my_tool)
+reply = safe_llm("用户说的话")
+
+# 方式二：分环节手动控制
+guard.check_input("用户输入")            # 违规抛 GuardBlocked
+safe = guard.review_output("模型回复")    # 返回脱敏+水印后的安全文本
+```
+
+- 拦截时抛出 `GuardBlocked`（`message` 即拦截原因，可直接展示）
+- 完整可运行示例见 `接入示例.py`（`python 接入示例.py` 直接跑）
+- SDK 演示：`python guard_sdk.py`
+
 ## API 文档
 
 ### 风控接口
