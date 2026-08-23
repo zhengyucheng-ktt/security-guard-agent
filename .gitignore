@@ -16,6 +16,11 @@ reputation_cache.json
 *.dll
 *.so
 *.dylib
+dist/
+*.zip
+
+# PyInstaller 中间产物
+build/
 
 # 测试文件
 test.json

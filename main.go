@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"embed"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"html/template"
 	"io"
 	"log"
 	"net/http"
@@ -23,6 +25,9 @@ import (
 	"github.com/redis/go-redis/v9"
 	"golang.org/x/time/rate"
 )
+
+//go:embed templates
+var templatesFS embed.FS // 管理后台模板内嵌进二进制，单文件分发无需额外 templates 目录
 
 // ============================================================
 // 环境变量配置
@@ -1617,7 +1622,12 @@ func main() {
 // setupRouter 注册全部路由（独立函数，便于测试复用）
 func setupRouter() *gin.Engine {
 	r := gin.Default()
-	r.LoadHTMLGlob("templates/*")
+	// 模板已通过 go:embed 内嵌，支持单文件分发
+	tmpl, err := template.ParseFS(templatesFS, "templates/*.html")
+	if err != nil {
+		log.Printf("⚠️ 模板解析失败: %v", err)
+	}
+	r.SetHTMLTemplate(tmpl)
 
 	// 业务侧风控接口：配置 guard_api_key 后需携带 X-Guard-Key
 	guard := r.Group("/v1", guardAuthMiddleware())

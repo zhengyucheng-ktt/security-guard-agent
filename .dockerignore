@@ -1,0 +1,13 @@
+# 构建上下文排除（编译产物/运行时文件/敏感文件）
+dist/
+*.exe
+*.exe~
+*.log
+admin_token.txt
+.jwt_secret
+sessions_cache.json
+reputation_cache.json
+__pycache__/
+.gui*
+*.zip
+.git/

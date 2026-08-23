@@ -45,7 +45,24 @@ def my_tool(tool_request, token):
 
 # ==================== 接入（只需这一段） ====================
 
+def _check_guard():
+    """检查 guard 服务是否在运行，未运行给出启动指引。"""
+    import requests as _rq
+    try:
+        if _rq.get(f"{GUARD_URL}/health", timeout=2).status_code == 200:
+            return True
+    except Exception:
+        pass
+    print("❌ 无法连接 guard 服务，请先启动：")
+    print("   1) 双击「启动服务.bat」（或「启动GUI.bat」）")
+    print("   2) 或命令行运行: go run main.go")
+    return False
+
+
 def main():
+    if not _check_guard():
+        return
+
     guard = Guard(url=GUARD_URL, api_key=GUARD_API_KEY)
 
     # 方式一（推荐）：包装 LLM，一行完成全部防护
