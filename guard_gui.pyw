@@ -161,6 +161,8 @@ class GuardConfigGUI:
         self.user_rate_var = tk.StringVar(value="5")
         self.ip_rate_var = tk.StringVar(value="30")
         self.rep_var = tk.BooleanVar(value=True)
+        # 业务侧调用密钥（/v1/guard 鉴权；留空则不限）
+        self.guard_key_var = tk.StringVar(value="")
 
         # 自动刷新 / 自动滚动开关
         self.session_auto = tk.BooleanVar(value=True)
@@ -299,6 +301,7 @@ class GuardConfigGUI:
             'user_rate_limit': user_rate,
             'ip_rate_limit': ip_rate,
             'enable_reputation_score': self.rep_var.get(),
+            'guard_api_key': self.guard_key_var.get().strip(),
         }
         try:
             resp = requests.put(f"{API_BASE}/config", json=config, headers=admin_headers(True), timeout=3)
@@ -346,6 +349,8 @@ class GuardConfigGUI:
             self.ip_rate_var.set(str(cfg['ip_rate_limit']))
         if 'enable_reputation_score' in cfg:
             self.rep_var.set(bool(cfg['enable_reputation_score']))
+        if 'guard_api_key' in cfg:
+            self.guard_key_var.set(cfg.get('guard_api_key') or '')
         if not silent:
             self._append_log("✅ 已同步服务端配置")
 
@@ -939,10 +944,14 @@ class GuardConfigGUI:
         tk.Checkbutton(frame, variable=self.rep_var, bg='white',
                        font=("Microsoft YaHei", 10)).grid(row=9, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="", bg='white').grid(row=10, column=0, pady=4)
-        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=11, column=0, columnspan=2, sticky='w', pady=6)
+        tk.Label(frame, text="业务调用密钥:", bg='white', font=("Microsoft YaHei", 10)).grid(row=10, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.guard_key_var, width=24, show="*",
+                 font=("Microsoft YaHei", 10)).grid(row=10, column=1, sticky='w', pady=4)
+
+        tk.Label(frame, text="", bg='white').grid(row=11, column=0, pady=4)
+        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=12, column=0, columnspan=2, sticky='w', pady=6)
         self._btn(frame, "🔄 从服务端刷新", lambda: self._sync_config_from_server(silent=False),
-                  bg='#2196F3', width=16).grid(row=11, column=1, sticky='w', pady=6)
+                  bg='#2196F3', width=16).grid(row=12, column=1, sticky='w', pady=6)
 
         tip = ("说明：\n"
                "· 差分隐私：开启后对输出统计类数据加入噪声（预留扩展）\n"
@@ -952,9 +961,10 @@ class GuardConfigGUI:
                "· 内容去重：相同/高度相似评论在窗口内重复出现直接拦截（专杀刷屏）\n"
                "· 账号/IP 限流：按 user_id 与来源 IP 聚合限流，堵住分布式刷评\n"
                "· 账号信誉分：违规跨会话累计，低信誉账号直接降权\n"
+               "· 业务调用密钥：业务系统调 /v1/guard 时需携带 X-Guard-Key（留空则不鉴权）\n"
                "· 配置修改后服务端自动热加载，无需重启")
         tk.Label(frame, text=tip, bg='#f0f7ff', fg='#555', justify='left',
-                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=12, column=0, columnspan=2, sticky='we', pady=10)
+                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=13, column=0, columnspan=2, sticky='we', pady=10)
 
     # ---- 水印提取 ----
     def _create_watermark_tab(self):

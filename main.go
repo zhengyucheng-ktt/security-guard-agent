@@ -58,7 +58,8 @@ type SystemConfig struct {
 	DuplicateWindowMinutes   int  `json:"duplicate_window_minutes"`   //    去重窗口（分钟）
 	UserRateLimit            int  `json:"user_rate_limit"`            // ② 账号维度聚合限流（次/秒）
 	IPRateLimit              int  `json:"ip_rate_limit"`              // ② IP 维度聚合限流（次/秒）
-	EnableReputationScore    bool `json:"enable_reputation_score"`    // ③ 账号信誉分（跨会话）
+	EnableReputationScore    bool   `json:"enable_reputation_score"`    // ③ 账号信誉分（跨会话）
+	GuardAPIKey              string `json:"guard_api_key"`              // /v1/guard 调用方鉴权密钥（留空则不鉴权）
 }
 
 
@@ -148,6 +149,24 @@ func adminAuthMiddleware() gin.HandlerFunc {
 	}
 }
 
+// guardAuthMiddleware 业务侧调用 /v1/guard 的鉴权（配置 guard_api_key 后生效，留空则不限）
+func guardAuthMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		configMutex.RLock()
+		key := systemConfig.GuardAPIKey
+		configMutex.RUnlock()
+		if key == "" {
+			c.Next()
+			return
+		}
+		if c.GetHeader("X-Guard-Key") != key {
+			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: 缺少或错误的服务调用密钥（X-Guard-Key）"})
+			return
+		}
+		c.Next()
+	}
+}
+
 const (
 	THRESHOLD_WARNING   = 30
 	THRESHOLD_LIMIT     = 60
@@ -180,6 +199,7 @@ type GuardResponse struct {
 	SafeOutput    string `json:"safe_output,omitempty"`
 	CurrentScore  int    `json:"current_score,omitempty"`
 	SessionStatus string `json:"session_status,omitempty"`
+	ToolToken     string `json:"tool_token,omitempty"` // 工具调用授权令牌（tool_call 放行时返回）
 }
 
 type Rule struct {
@@ -699,21 +719,16 @@ func sanitizeParams(toolName string, params map[string]interface{}) map[string]i
 func loadSystemConfig() {
 	data, err := os.ReadFile("system_config.json")
 	if err != nil {
-		systemConfig = SystemConfig{
-			EnableDifferentialPrivacy: false,
-			RateLimit:                 10,
-			DefaultLevel:              "partial",
-			SessionTimeout:            30,
-			EnableDuplicateDetection:  true,
-			DuplicateWindowMinutes:    10,
-			UserRateLimit:             5,
-			IPRateLimit:               30,
-			EnableReputationScore:     true,
-		}
+		systemConfig = defaultSystemConfig()
 		saveSystemConfig()
 		return
 	}
-	json.Unmarshal(data, &systemConfig)
+	if err := json.Unmarshal(data, &systemConfig); err != nil {
+		log.Printf("⚠️ system_config.json 解析失败（%v），使用默认配置", err)
+		systemConfig = defaultSystemConfig()
+		saveSystemConfig()
+		return
+	}
 	// 兜底默认值（兼容旧配置文件缺少新字段的情况）
 	if systemConfig.DuplicateWindowMinutes <= 0 {
 		systemConfig.DuplicateWindowMinutes = 10
@@ -723,6 +738,20 @@ func loadSystemConfig() {
 	}
 	if systemConfig.IPRateLimit <= 0 {
 		systemConfig.IPRateLimit = 30
+	}
+}
+
+func defaultSystemConfig() SystemConfig {
+	return SystemConfig{
+		EnableDifferentialPrivacy: false,
+		RateLimit:                 10,
+		DefaultLevel:              "partial",
+		SessionTimeout:            30,
+		EnableDuplicateDetection:  true,
+		DuplicateWindowMinutes:    10,
+		UserRateLimit:             5,
+		IPRateLimit:               30,
+		EnableReputationScore:     true,
 	}
 }
 
@@ -939,6 +968,7 @@ func guardHandler(c *gin.Context) {
             break
         }
         log.Printf("🔑 生成工具令牌: %s... (有效期30秒)", token[:20])
+        resp.ToolToken = token // 令牌返回给业务侧，供工具端 validate-token 自证
     }
 
     if decision == "allow" {
@@ -1570,8 +1600,10 @@ func setupRouter() *gin.Engine {
 	r := gin.Default()
 	r.LoadHTMLGlob("templates/*")
 
-	r.POST("/v1/guard", guardHandler)
-	r.POST("/v1/guard/validate-token", validateTokenHandler)
+	// 业务侧风控接口：配置 guard_api_key 后需携带 X-Guard-Key
+	guard := r.Group("/v1", guardAuthMiddleware())
+	guard.POST("/guard", guardHandler)
+	guard.POST("/guard/validate-token", validateTokenHandler)
 	r.GET("/health", healthHandler)
 
 	// 管理后台页面（无需 Token，API 需要）

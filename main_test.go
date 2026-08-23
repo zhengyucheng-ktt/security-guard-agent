@@ -39,6 +39,7 @@ func TestMain(m *testing.M) {
 	systemConfig.UserRateLimit = 0
 	systemConfig.IPRateLimit = 0
 	systemConfig.EnableReputationScore = false
+	systemConfig.GuardAPIKey = "" // 业务侧密钥鉴权由专项测试单独开启
 	// 清空反刷评全局缓存
 	dupCacheMu.Lock()
 	dupCache = make(map[string]time.Time)
@@ -1040,5 +1041,92 @@ func TestContextPoisoningProgressive(t *testing.T) {
 	}
 	if !strings.Contains(r["block_reason"].(string), "渐进式注入") {
 		t.Fatalf("拦截原因应标明渐进式注入: %v", r)
+	}
+}
+
+// ============================================================
+// 业务对接（tool_call 返回令牌 / 调用方鉴权）
+// ============================================================
+
+func TestGuardToolTokenReturned(t *testing.T) {
+	srv := setupTestServer(t)
+	code, r := postJSON(t, srv.URL+"/v1/guard", map[string]interface{}{
+		"session_id": "it-tok", "user_id": "u1", "action_type": "tool_call",
+		"tool_name": "/api/weather/query", "tool_params": map[string]interface{}{"city": "北京"},
+	})
+	if code != 200 || r["decision"] != "allow" {
+		t.Fatalf("工具调用应放行: code=%d result=%v", code, r)
+	}
+	token, _ := r["tool_token"].(string)
+	if token == "" {
+		t.Fatal("tool_call 放行时应返回 tool_token")
+	}
+	// 令牌应能被 validate-token 验证
+	_, vr := postJSON(t, srv.URL+"/v1/guard/validate-token", map[string]interface{}{"token": token})
+	if vr["valid"] != true {
+		t.Fatalf("返回的令牌应验证通过: %v", vr)
+	}
+}
+
+func TestGuardAPIKeyAuth(t *testing.T) {
+	srv := setupTestServer(t)
+	// 配置调用密钥
+	configMutex.Lock()
+	oldKey := systemConfig.GuardAPIKey
+	systemConfig.GuardAPIKey = "test-guard-key"
+	configMutex.Unlock()
+	defer func() {
+		configMutex.Lock()
+		systemConfig.GuardAPIKey = oldKey
+		configMutex.Unlock()
+	}()
+
+	body := `{"session_id":"it-key","user_id":"u1","action_type":"user_input","content":"今天天气怎么样"}`
+
+	// 无密钥 → 401
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/guard", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 401 {
+		t.Fatalf("无密钥应 401, 得到 %d", resp.StatusCode)
+	}
+	// 错误密钥 → 401
+	req2, _ := http.NewRequest("POST", srv.URL+"/v1/guard", strings.NewReader(body))
+	req2.Header.Set("Content-Type", "application/json")
+	req2.Header.Set("X-Guard-Key", "wrong")
+	resp2, err := http.DefaultClient.Do(req2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp2.Body.Close()
+	if resp2.StatusCode != 401 {
+		t.Fatalf("错误密钥应 401, 得到 %d", resp2.StatusCode)
+	}
+	// 正确密钥 → 200
+	req3, _ := http.NewRequest("POST", srv.URL+"/v1/guard", strings.NewReader(body))
+	req3.Header.Set("Content-Type", "application/json")
+	req3.Header.Set("X-Guard-Key", "test-guard-key")
+	resp3, err := http.DefaultClient.Do(req3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp3.Body.Close()
+	if resp3.StatusCode != 200 {
+		t.Fatalf("正确密钥应 200, 得到 %d", resp3.StatusCode)
+	}
+	// validate-token 同样受保护
+	req4, _ := http.NewRequest("POST", srv.URL+"/v1/guard/validate-token", strings.NewReader(`{"token":"x"}`))
+	req4.Header.Set("Content-Type", "application/json")
+	resp4, err := http.DefaultClient.Do(req4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp4.Body.Close()
+	if resp4.StatusCode != 401 {
+		t.Fatalf("validate-token 无密钥应 401, 得到 %d", resp4.StatusCode)
 	}
 }
