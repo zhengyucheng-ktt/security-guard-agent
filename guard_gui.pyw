@@ -284,17 +284,6 @@ class GuardConfigGUI:
         tk.Label(header, text="🛡️ 安全交互守护智能体", font=("Microsoft YaHei", 16, "bold"),
                  bg='#f5f5f5', fg='#333').pack(side='left')
 
-        cfg = tk.Frame(header, bg='#f5f5f5')
-        cfg.pack(side='left', padx=20)
-        tk.Label(cfg, text="🔢 差分隐私:", bg='#f5f5f5', font=("Microsoft YaHei", 9)).pack(side='left')
-        cb = tk.Checkbutton(cfg, variable=self.dp_var, command=self._on_dp_change, bg='#f5f5f5')
-        cb.pack(side='left', padx=5)
-        tk.Label(cfg, text="🚦 限流:", bg='#f5f5f5', font=("Microsoft YaHei", 9)).pack(side='left')
-        self.rate_entry = tk.Entry(cfg, textvariable=self.rate_var, width=4, font=("Microsoft YaHei", 9))
-        self.rate_entry.pack(side='left', padx=5)
-        tk.Label(cfg, text="次/秒", bg='#f5f5f5', font=("Microsoft YaHei", 9)).pack(side='left')
-        self._btn(cfg, "💾 保存", self._save_config, bg='#4CAF50', width=6).pack(side='left', padx=5)
-
         btn = tk.Frame(header, bg='#f5f5f5')
         btn.pack(side='right')
         self.start_btn = self._btn(btn, "▶ 启动", self.start_service, bg='#4CAF50', width=7)
@@ -307,9 +296,6 @@ class GuardConfigGUI:
         self.status_label = tk.Label(btn, text="状态: 未启动", font=("Microsoft YaHei", 10, "bold"),
                                      bg='#f5f5f5', fg='red')
         self.status_label.pack(side='left', padx=10)
-
-    def _on_dp_change(self):
-        self._save_config()
 
     def _save_config(self):
         if not self._check_service_running():
