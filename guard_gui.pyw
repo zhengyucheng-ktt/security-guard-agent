@@ -987,27 +987,35 @@ class GuardConfigGUI:
         tk.Label(frame, text="🤖 安全审核 LLM（判定引擎）", bg='white', font=("Microsoft YaHei", 10, "bold"),
                  fg='#1976D2').grid(row=11, column=0, columnspan=2, sticky='w', pady=(10, 2))
         tk.Label(frame, text="模式:", bg='white', font=("Microsoft YaHei", 10)).grid(row=12, column=0, sticky='w', pady=4)
-        ttk.Combobox(frame, textvariable=self.llm_mode_var, values=["local", "cloud", "hybrid"],
-                     width=8, state='readonly').grid(row=12, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="本地接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=13, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.llm_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=13, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="本地模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=14, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.llm_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=14, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=15, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.cloud_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=15, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=16, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.cloud_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=16, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端 Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=17, column=0, sticky='w', pady=4)
+        self.llm_mode_combo = ttk.Combobox(frame, textvariable=self.llm_mode_var,
+                                           values=["local", "cloud", "hybrid"],
+                                           width=8, state='readonly')
+        self.llm_mode_combo.grid(row=12, column=1, sticky='w', pady=4)
+        self.llm_mode_combo.bind("<<ComboboxSelected>>", lambda e: self._update_mode_tip())
+        # 模式优缺点动态说明（选择即显示）
+        self.mode_tip_label = tk.Label(frame, text="", bg='#FFF8E1', fg='#5D4037', justify='left',
+                                       font=("Microsoft YaHei", 9), padx=8, pady=6, wraplength=520)
+        self.mode_tip_label.grid(row=13, column=0, columnspan=2, sticky='we', pady=(0, 6))
+        self._update_mode_tip()
+        tk.Label(frame, text="本地接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=14, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.llm_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=14, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="本地模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=15, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.llm_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=15, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=16, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.cloud_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=16, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=17, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.cloud_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=17, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端 Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=18, column=0, sticky='w', pady=4)
         tk.Entry(frame, textvariable=self.cloud_key_var, width=24, show="*",
-                 font=("Microsoft YaHei", 10)).grid(row=17, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="失败策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=18, column=0, sticky='w', pady=4)
+                 font=("Microsoft YaHei", 10)).grid(row=18, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="失败策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=19, column=0, sticky='w', pady=4)
         ttk.Combobox(frame, textvariable=self.fail_policy_var, values=["fallback", "allow", "block"],
-                     width=10, state='readonly').grid(row=18, column=1, sticky='w', pady=4)
+                     width=10, state='readonly').grid(row=19, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="", bg='white').grid(row=19, column=0, pady=4)
-        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=20, column=0, columnspan=2, sticky='w', pady=6)
+        tk.Label(frame, text="", bg='white').grid(row=20, column=0, pady=4)
+        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=21, column=0, columnspan=2, sticky='w', pady=6)
         self._btn(frame, "🔄 从服务端刷新", lambda: self._sync_config_from_server(silent=False),
-                  bg='#2196F3', width=16).grid(row=20, column=1, sticky='w', pady=6)
+                  bg='#2196F3', width=16).grid(row=21, column=1, sticky='w', pady=6)
 
         tip = ("说明：\n"
                "· 差分隐私：开启后对输出统计类数据加入噪声（预留扩展）\n"
@@ -1023,7 +1031,25 @@ class GuardConfigGUI:
                "    失败策略：fallback=降级到另一引擎 / allow=放行 / block=拦截（fail-closed）\n"
                "· 配置修改后服务端自动热加载，无需重启")
         tk.Label(frame, text=tip, bg='#f0f7ff', fg='#555', justify='left',
-                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=21, column=0, columnspan=2, sticky='we', pady=10)
+                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=22, column=0, columnspan=2, sticky='we', pady=10)
+
+    def _update_mode_tip(self):
+        """按当前选择的判定引擎模式，动态显示优缺点与适用场景。"""
+        tips = {
+            "local": "【本地模式】用本地 Ollama 模型审核\n"
+                     "✔ 优点：数据不出网（隐私/合规安全）、零 API 成本、断网可用、无 Key 泄露风险\n"
+                     "✘ 缺点：判定力受本地模型与显存限制（7B 对复杂攻击有盲区）、需自己维护模型\n"
+                     "▶ 适合：数据敏感（金融/医疗/政务）、离线或内网环境",
+            "cloud": "【云端模式】用云端 API（OpenAI 兼容）审核\n"
+                     "✔ 优点：判定能力最强、模型免维护自动升级、响应快\n"
+                     "✘ 缺点：用户内容出网（隐私/合规风险，需评估）、按量付费、依赖网络与供应商可用性、Key 泄露会被盗刷\n"
+                     "▶ 适合：判定力优先、数据敏感性低（客服/社区）、预算充足",
+            "hybrid": "【混合模式】本地初筛 + 云端终审（双保险）\n"
+                      "✔ 优点：隐私与能力平衡——本地先判，识别到风险直接拦（大多数据不出网），本地判安全才升级云端复核\n"
+                      "✘ 缺点：可疑请求两次调用更慢、需同时配置两个引擎、云端不可达时依赖失败策略兜底\n"
+                      "▶ 适合：兼顾隐私与判定力的场景（推荐默认）",
+        }
+        self.mode_tip_label.config(text=tips.get(self.llm_mode_var.get(), ""))
 
     # ---- 水印提取 ----
     def _create_watermark_tab(self):

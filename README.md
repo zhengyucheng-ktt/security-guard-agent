@@ -112,8 +112,39 @@ curl -X POST http://localhost:8080/v1/guard/validate-token \
 | `PUT /admin/api/sessions/:id/ban` | 手动封禁（积分置 100） |
 | `GET /admin/api/sessions/:id/audit` | 会话风险明细（审计记录） |
 | `GET /admin/api/logs?tail=N&date=YYYYMMDD` | 审计日志（末尾 N 行 / 历史日期） |
-| `GET/PUT /admin/api/config` | 系统配置（差分隐私/限流/脱敏级别/会话超时） |
+| `GET/PUT /admin/api/config` | 系统配置（差分隐私/限流/脱敏级别/会话超时/判定引擎） |
 | `POST /admin/api/extract-watermark` | 水印提取（溯源） |
+
+## 判定引擎模式选择指南
+
+安全审核 LLM（判定模型）支持三种模式，由用户自行选择（GUI「⚙️ 系统配置」或 `system_config.json` 的 `llm_judge_mode`），配置热加载即生效：
+
+| 模式 | 逻辑 | 优点 | 缺点 | 适合 |
+|---|---|---|---|---|
+| **local** | 只用本地 Ollama 模型 | 数据不出网（隐私/合规安全）、零 API 成本、断网可用、无 Key 泄露风险 | 判定力受本地模型与显存限制（7B 对复杂攻击有盲区）、需自己维护模型 | 数据敏感（金融/医疗/政务）、离线或内网环境 |
+| **cloud** | 只用云端 API（OpenAI 兼容） | 判定能力最强、模型免维护自动升级、响应快 | 用户内容出网（隐私/合规风险）、按量付费、依赖网络与供应商、Key 泄露会被盗刷 | 判定力优先、数据敏感性低、预算充足 |
+| **hybrid** | 本地初筛 + 云端终审 | 隐私与能力平衡——本地先判（大多数据不出网），本地判安全才升级云端复核，双保险更安全 | 可疑请求两次调用更慢、需同时配置两个引擎、云端不可达时依赖失败策略 | 兼顾隐私与判定力（推荐默认） |
+
+**失败策略**（`llm_judge_fail_policy`，引擎不可用时）：
+
+| 策略 | 行为 | 安全性 |
+|---|---|---|
+| `fallback` | 降级到另一引擎（本地↔云端互为备份） | 推荐默认 |
+| `block` | 拦截（"审核服务不可用"） | fail-closed，最安全 |
+| `allow` | 放行 | fail-open，有风险 |
+
+配置示例：
+```json
+"llm_judge_mode": "hybrid",
+"llm_judge_url": "http://localhost:11434/v1/chat/completions",
+"llm_judge_model": "qwen2.5:7b",
+"cloud_judge_url": "https://api.deepseek.com/v1/chat/completions",
+"cloud_judge_model": "deepseek-chat",
+"cloud_judge_api_key": "sk-xxx",
+"llm_judge_fail_policy": "fallback"
+```
+
+> 提示：接云端前确认云厂商数据处理政策（是否留存/用于训练）与数据出境合规；GUI 中切换模式会实时显示各模式的优缺点说明。
 
 ## 配置说明
 
