@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -260,7 +261,7 @@ var (
 
 	memoryCache   = make(map[string]cacheEntry)
 	cacheMutex    sync.RWMutex
-	useMemoryMode bool
+	useMemoryMode atomic.Bool
 
 	nlpRules   []NLPRule
 	nlpRulesMu sync.RWMutex
@@ -1290,7 +1291,7 @@ func adminGetLogs(c *gin.Context) {
 
 func adminGetSessions(c *gin.Context) {
 	// 内存模式：直接读内存缓存
-	if useMemoryMode {
+	if useMemoryMode.Load() {
 		cacheMutex.RLock()
 		sessions := []map[string]interface{}{}
 		for sessionID, entry := range memoryCache {
@@ -1333,7 +1334,7 @@ func adminResetSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
 		return
 	}
-	if useMemoryMode {
+	if useMemoryMode.Load() {
 		cacheMutex.Lock()
 		delete(memoryCache, sessionID)
 		cacheMutex.Unlock()
@@ -1357,7 +1358,7 @@ func adminBanSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session id"})
 		return
 	}
-	if useMemoryMode {
+	if useMemoryMode.Load() {
 		cacheMutex.Lock()
 		memoryCache[sessionID] = cacheEntry{score: 100, exp: time.Now().Add(SESSION_TTL)}
 		cacheMutex.Unlock()
@@ -1804,22 +1805,29 @@ func main() {
 		Password:     getEnv("REDIS_PASSWORD", ""),
 		DB:           getEnvInt("REDIS_DB", 0),
 		PoolSize:     getEnvInt("REDIS_POOL_SIZE", 10),
-		MinIdleConns: getEnvInt("REDIS_MIN_IDLE", 0), // 无 Redis 时不保持空闲连接，避免启动噪音
-		DialTimeout:  1 * time.Second,                // 缩短探测超时，Redis 不可用时不拖慢启动
-		ReadTimeout:  1 * time.Second,
-		WriteTimeout: 1 * time.Second,
+		MinIdleConns: getEnvInt("REDIS_MIN_IDLE", 5),
+		// 连接稳定性：宽松超时 + 自动重试 + 空闲保活，避免网络抖动/服务端断开导致误判断连
+		DialTimeout:     3 * time.Second,
+		ReadTimeout:     3 * time.Second,
+		WriteTimeout:    3 * time.Second,
+		PoolTimeout:     3 * time.Second,
+		ConnMaxIdleTime:     5 * time.Minute,  // 空闲连接回收，防止被服务端静默断开
+		ConnMaxLifetime:      30 * time.Minute, // 定期轮换连接，防中间设备断连
+		MaxRetries:      3,                // 单次操作自动重试，网络抖动不报错
+		MinRetryBackoff: 100 * time.Millisecond,
+		MaxRetryBackoff: 2 * time.Second,
 	})
 
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
 	pong, err := redisClient.Ping(ctxTimeout).Result()
 	if err != nil {
 		log.Printf("ℹ️ Redis 不可用（%v），使用内存模式（单实例无需 Redis，会话数据自动持久化到本地文件）", err)
-		useMemoryMode = true
+		useMemoryMode.Store(true)
 	} else {
 		log.Printf("✅ Redis 连接成功: %s（多实例共享模式）", pong)
-		useMemoryMode = false
+		useMemoryMode.Store(false)
 	}
 
 	loadRules()

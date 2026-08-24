@@ -25,7 +25,7 @@ func TestMain(m *testing.M) {
 	// 加大日志缓冲，避免测试触发同步写污染 audit.log
 	logChan = make(chan logEntry, 100000)
 	gin.SetMode(gin.TestMode)
-	useMemoryMode = true
+	useMemoryMode.Store(true)
 
 	initAuditLogRotation() // 初始化按天轮转（避免测试期间误轮转）
 	startLogWorker()       // 启动日志写入 worker，保证审计记录落盘
@@ -776,7 +776,7 @@ func TestAdminGetSessionAudit(t *testing.T) {
 }
 
 func TestPersistSessions(t *testing.T) {
-	if !useMemoryMode {
+	if !useMemoryMode.Load() {
 		t.Skip("仅内存模式测试")
 	}
 	// 清空内存

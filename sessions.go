@@ -5,11 +5,13 @@ package main
 // ============================================================
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
 	"strconv"
 	"time"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -18,7 +20,7 @@ import (
 // ============================================================
 
 func getSessionScore(sessionID string) (int, error) {
-	if useMemoryMode {
+	if useMemoryMode.Load() {
 		cacheMutex.RLock()
 		defer cacheMutex.RUnlock()
 		entry, ok := memoryCache[sessionID]
@@ -39,7 +41,7 @@ func getSessionScore(sessionID string) (int, error) {
 }
 
 func updateSessionScore(sessionID string, delta int) (int, error) {
-	if useMemoryMode {
+	if useMemoryMode.Load() {
 		cacheMutex.Lock()
 		defer cacheMutex.Unlock()
 		current := 0
@@ -131,6 +133,17 @@ func startCacheJanitor() {
 			}
 			sessionCtxMu.Unlock()
 
+			// Redis 健康检查：运行中连接异常自动降级内存模式（功能不失效）
+			if !useMemoryMode.Load() {
+				pingCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				pingErr := redisClient.Ping(pingCtx).Err()
+				cancel()
+				if pingErr != nil {
+					log.Printf("⚠️ Redis 连接异常(%v)，自动降级为内存模式（会话数据继续本地持久化，功能不受影响）", pingErr)
+					useMemoryMode.Store(true)
+				}
+			}
+
 			persistSessions()    // 内存模式下持久化积分，重启不丢
 			persistReputation()  // 持久化账号信誉分
 		}
@@ -151,7 +164,7 @@ type persistedSession struct {
 }
 
 func persistSessions() {
-	if !useMemoryMode {
+	if !useMemoryMode.Load() {
 		return
 	}
 	cacheMutex.RLock()
@@ -168,7 +181,7 @@ func persistSessions() {
 }
 
 func loadPersistedSessions() {
-	if !useMemoryMode {
+	if !useMemoryMode.Load() {
 		return
 	}
 	data, err := os.ReadFile(sessionsCacheFile)
