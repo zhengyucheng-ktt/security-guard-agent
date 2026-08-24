@@ -1323,7 +1323,7 @@ func adminGetSessionAudit(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"session_id": sessionID, "records": records})
 }
 
-// 清空反刷评/限流/语境缓存（运维用：演示、误报恢复）
+// 清空反刷评/限流/语境/信誉缓存（运维用：演示、误报恢复）
 func adminResetAntiBotCache(c *gin.Context) {
 	dupCacheMu.Lock()
 	dupCache = make(map[string]time.Time)
@@ -1338,7 +1338,10 @@ func adminResetAntiBotCache(c *gin.Context) {
 	limiterMutex.Lock()
 	limiters = make(map[string]*sessionLimiter)
 	limiterMutex.Unlock()
-	log.Println("🧹 反刷评/限流/语境缓存已清空")
+	repMu.Lock()
+	reputationCache = make(map[string]cacheEntry)
+	repMu.Unlock()
+	log.Println("🧹 反刷评/限流/语境/信誉缓存已清空")
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
