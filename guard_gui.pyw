@@ -1016,9 +1016,28 @@ class GuardConfigGUI:
         tab = tk.Frame(self.notebook, bg='white')
         self.notebook.add(tab, text="⚙️ 系统配置")
 
-        frame = tk.Frame(tab, bg='white')
-        frame.pack(fill='x', padx=20, pady=15)
+        # 滚动容器（配置项较多，支持滚轮滚动）
+        canvas = tk.Canvas(tab, bg='white', highlightthickness=0)
+        vbar = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        vbar.pack(side='right', fill='y')
+
+        frame = tk.Frame(canvas, bg='white')
+        canvas.create_window((0, 0), window=frame, anchor='nw')
         frame.columnconfigure(1, weight=1)
+
+        # 内容尺寸变化时更新滚动区域
+        frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        # 鼠标进入本页时才劫持滚轮，避免影响其他标签页
+        def _bind_wheel(_e):
+            canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        def _unbind_wheel(_e):
+            canvas.unbind_all("<MouseWheel>")
+        def _on_mousewheel(event):
+            canvas.yview_scroll(int(-event.delta / 120), "units")
+        canvas.bind("<Enter>", _bind_wheel)
+        canvas.bind("<Leave>", _unbind_wheel)
 
         tk.Label(frame, text="差分隐私:", bg='white', font=("Microsoft YaHei", 10)).grid(row=0, column=0, sticky='w', pady=6)
         tk.Checkbutton(frame, variable=self.dp_var, bg='white',
