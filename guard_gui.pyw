@@ -395,8 +395,8 @@ class GuardConfigGUI:
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
         self._create_log_tab()
-        self._create_nlp_tab()
-        self._create_keyword_tab()
+        self._create_rules_tab()
+
         self._create_whitelist_tab()
         self._create_session_tab()
         self._create_audit_tab()
@@ -425,301 +425,162 @@ class GuardConfigGUI:
         self.log_text.delete(1.0, tk.END)
         self._append_log("📋 日志已清空")
 
-    # ---- NLP 规则 ----
-    def _create_nlp_tab(self):
+    # ---- 规则管理（合并：关键词/正则/NLP/审核触发词） ----
+    def _create_rules_tab(self):
         tab = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(tab, text="🧠 NLP规则")
+        self.notebook.add(tab, text="📋 规则管理")
 
         toolbar = tk.Frame(tab, bg='white')
         toolbar.pack(fill='x', padx=5, pady=5)
-        tk.Label(toolbar, text="名称:", bg='white').pack(side='left', padx=5)
-        self.nlp_name_entry = tk.Entry(toolbar, width=12)
-        self.nlp_name_entry.pack(side='left', padx=5)
-        tk.Label(toolbar, text="描述:", bg='white').pack(side='left', padx=5)
-        self.nlp_desc_entry = tk.Entry(toolbar, width=20)
-        self.nlp_desc_entry.pack(side='left', padx=5)
-        tk.Label(toolbar, text="动作:", bg='white').pack(side='left', padx=5)
-        self.nlp_action_var = tk.StringVar(value="block")
-        ttk.Combobox(toolbar, textvariable=self.nlp_action_var, values=["block", "warning", "allow"],
-                     width=8, state='readonly').pack(side='left', padx=5)
-        self._btn(toolbar, "➕ 添加", self._add_nlp_rule, bg='#4CAF50').pack(side='left', padx=5)
-        self._btn(toolbar, "🔄 刷新", self._load_nlp_rules_async, bg='#2196F3').pack(side='left', padx=5)
+        tk.Label(toolbar, text="类型:", bg='white').pack(side='left', padx=5)
+        self.rule_type_var = tk.StringVar(value="关键词")
+        ttk.Combobox(toolbar, textvariable=self.rule_type_var, state='readonly', width=12, values=[
+            "关键词", "正则", "NLP-拦截", "NLP-警告", "NLP-放行", "审核触发词"
+        ]).pack(side='left', padx=5)
+        tk.Label(toolbar, text="内容:", bg='white').pack(side='left', padx=5)
+        self.rule_entry = tk.Entry(toolbar, width=22)
+        self.rule_entry.pack(side='left', padx=5)
+        self._btn(toolbar, "➕ 添加", self._add_rule, bg='#4CAF50').pack(side='left', padx=5)
+        self._btn(toolbar, "🔄 刷新", self._load_rules_async, bg='#2196F3').pack(side='left', padx=5)
 
-        columns = ("ID", "名称", "描述", "动作", "状态", "创建时间")
-        self.nlp_tree = ttk.Treeview(tab, columns=columns, show="headings", height=10)
+        columns = ("类型", "内容", "动作", "状态")
+        self.rule_tree = ttk.Treeview(tab, columns=columns, show="headings", height=14)
         for col in columns:
-            self.nlp_tree.heading(col, text=col)
-            self.nlp_tree.column(col, width=100)
-        scroll = ttk.Scrollbar(tab, orient="vertical", command=self.nlp_tree.yview)
-        self.nlp_tree.configure(yscrollcommand=scroll.set)
-        self.nlp_tree.pack(side='left', fill='both', expand=True, padx=5, pady=5)
+            self.rule_tree.heading(col, text=col)
+            self.rule_tree.column(col, width=180)
+        scroll = ttk.Scrollbar(tab, orient="vertical", command=self.rule_tree.yview)
+        self.rule_tree.configure(yscrollcommand=scroll.set)
+        self.rule_tree.pack(side='left', fill='both', expand=True, padx=5, pady=5)
         scroll.pack(side='right', fill='y')
 
         action_frame = tk.Frame(tab, bg='white')
         action_frame.pack(fill='x', pady=5)
-        self._btn(action_frame, "启用", lambda: self._toggle_nlp_rule(True), bg='#4CAF50').pack(side='left', padx=5)
-        self._btn(action_frame, "禁用", lambda: self._toggle_nlp_rule(False), bg='#FF9800').pack(side='left', padx=5)
-        self._btn(action_frame, "删除", self._delete_nlp_rule, bg='#f44336').pack(side='left', padx=5)
+        self._btn(action_frame, "✅ 启用", lambda: self._toggle_rule(True), bg='#4CAF50').pack(side='left', padx=5)
+        self._btn(action_frame, "❌ 禁用", lambda: self._toggle_rule(False), bg='#FF9800').pack(side='left', padx=5)
+        self._btn(action_frame, "🗑 删除选中", self._delete_rule, bg='#f44336').pack(side='left', padx=5)
+        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核",
+                 bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='right', padx=10)
 
-    def _load_nlp_rules_async(self):
+    def _load_rules_async(self):
         def task():
             try:
-                resp = requests.get(f"{API_BASE}/nlp-rules", headers=admin_headers(), timeout=3)
-                if resp.status_code == 200:
-                    rules = resp.json().get('rules', [])
-                    self.root.after(0, lambda: self._update_nlp_tree(rules))
-                    self.root.after(0, lambda: self._append_log(f"✅ NLP规则已刷新: {len(rules)} 条"))
-                elif not self._check_resp(resp):
-                    return
+                r1 = requests.get(f"{API_BASE}/rules", headers=admin_headers(), timeout=3)
+                r2 = requests.get(f"{API_BASE}/nlp-rules", headers=admin_headers(), timeout=3)
+                r3 = requests.get(f"{API_BASE}/suspicious-keywords", headers=admin_headers(), timeout=3)
+                data = {"rules": [], "nlp": [], "sus": []}
+                if r1.status_code == 200:
+                    data["rules"] = r1.json().get("rules", [])
+                if r2.status_code == 200:
+                    data["nlp"] = r2.json().get("rules", [])
+                if r3.status_code == 200:
+                    data["sus"] = r3.json().get("keywords", [])
+                total = len(data["rules"]) + len(data["nlp"]) + len(data["sus"])
+                self.root.after(0, lambda: (self._update_rule_tree(data),
+                                            self._append_log(f"✅ 规则已刷新: 共 {total} 条")))
+                if r1.status_code == 401 or r2.status_code == 401 or r3.status_code == 401:
+                    self.root.after(0, lambda: self._check_resp(r1))
             except Exception as e:
-                self.root.after(0, lambda: self._append_log(f"❌ NLP规则加载异常: {e}"))
+                self.root.after(0, lambda: self._append_log(f"❌ 规则加载异常: {e}"))
         threading.Thread(target=task, daemon=True).start()
 
-    def _update_nlp_tree(self, rules):
-        for item in self.nlp_tree.get_children():
-            self.nlp_tree.delete(item)
-        for r in rules:
-            status = "✅ 启用" if r.get('enabled') else "❌ 禁用"
-            self.nlp_tree.insert("", "end", values=(
-                r.get('id', ''), r.get('name', ''), r.get('description', ''),
-                r.get('action', ''), status, r.get('created_at', '')
-            ))
+    def _update_rule_tree(self, data):
+        for item in self.rule_tree.get_children():
+            self.rule_tree.delete(item)
+        for idx, r in enumerate(data.get("rules", [])):
+            t = "关键词" if r.get("type") == "keyword" else ("正则" if r.get("type") == "regex" else r.get("type", ""))
+            self.rule_tree.insert("", "end", iid=f"rules-{idx}", values=(t, r.get("pattern", ""), "直接拦截", "启用"))
+        for idx, r in enumerate(data.get("nlp", [])):
+            action_map = {"block": "拦截", "warning": "警告", "allow": "放行"}
+            st = "启用" if r.get("enabled") else "禁用"
+            self.rule_tree.insert("", "end", iid=f"nlp-{idx}",
+                                  values=("NLP规则", r.get("name", ""), action_map.get(r.get("action", ""), r.get("action", "")), st))
+        for idx, w in enumerate(data.get("sus", [])):
+            self.rule_tree.insert("", "end", iid=f"sus-{idx}", values=("审核触发词", w, "触发LLM审核", "启用"))
 
-    def _add_nlp_rule(self):
-        name = self.nlp_name_entry.get().strip()
-        desc = self.nlp_desc_entry.get().strip()
-        action = self.nlp_action_var.get()
-        if not name or not desc:
-            messagebox.showwarning("提示", "请输入名称和描述")
+    def _add_rule(self):
+        pattern = self.rule_entry.get().strip()
+        if not pattern:
+            messagebox.showwarning("提示", "请输入内容")
             return
+        rule_type = self.rule_type_var.get()
         try:
-            resp = requests.post(f"{API_BASE}/nlp-rules", json={
-                "name": name, "description": desc, "action": action
-            }, headers=admin_headers(True), timeout=3)
+            if rule_type == "关键词":
+                resp = requests.post(f"{API_BASE}/rules", json={
+                    "type": "keyword", "pattern": pattern, "reason": f"命中关键词: {pattern}"
+                }, headers=admin_headers(True), timeout=3)
+            elif rule_type == "正则":
+                resp = requests.post(f"{API_BASE}/rules", json={
+                    "type": "regex", "pattern": pattern, "reason": f"命中正则: {pattern}"
+                }, headers=admin_headers(True), timeout=3)
+            elif rule_type.startswith("NLP-"):
+                action = {"NLP-拦截": "block", "NLP-警告": "warning", "NLP-放行": "allow"}[rule_type]
+                resp = requests.post(f"{API_BASE}/nlp-rules", json={
+                    "name": pattern, "description": pattern, "action": action
+                }, headers=admin_headers(True), timeout=3)
+            elif rule_type == "审核触发词":
+                resp = requests.post(f"{API_BASE}/suspicious-keywords", json={"keyword": pattern},
+                                     headers=admin_headers(True), timeout=3)
+            else:
+                return
             if not self._check_resp(resp):
                 return
             if resp.status_code == 200:
-                self._append_log(f"✅ NLP规则已添加: {name}")
-                self.nlp_name_entry.delete(0, tk.END)
-                self.nlp_desc_entry.delete(0, tk.END)
-                self._load_nlp_rules_async()
+                self._append_log(f"✅ 已添加[{rule_type}] {pattern}")
+                self.rule_entry.delete(0, tk.END)
+                self._load_rules_async()
             else:
                 messagebox.showerror("错误", f"添加失败: {resp.text}")
         except Exception as e:
             messagebox.showerror("错误", f"添加失败: {e}")
 
-    def _toggle_nlp_rule(self, enable):
-        selected = self.nlp_tree.selection()
+    def _delete_rule(self):
+        selected = self.rule_tree.selection()
         if not selected:
             messagebox.showinfo("提示", "请先选择一条规则")
             return
-        index = self.nlp_tree.index(selected[0])
+        if not messagebox.askyesno("确认", "确定删除选中的规则吗？"):
+            return
+        iid = selected[0]
         try:
-            resp = requests.put(f"{API_BASE}/nlp-rules/{index}/toggle", headers=admin_headers(), timeout=3)
+            if iid.startswith("rules-"):
+                resp = requests.delete(f"{API_BASE}/rules/{iid.split('-')[1]}", headers=admin_headers(), timeout=3)
+            elif iid.startswith("nlp-"):
+                resp = requests.delete(f"{API_BASE}/nlp-rules/{iid.split('-')[1]}", headers=admin_headers(), timeout=3)
+            elif iid.startswith("sus-"):
+                resp = requests.delete(f"{API_BASE}/suspicious-keywords/{iid.split('-')[1]}", headers=admin_headers(), timeout=3)
+            else:
+                return
+            if not self._check_resp(resp):
+                return
+            if resp.status_code == 200:
+                self._append_log("✅ 规则已删除")
+                self._load_rules_async()
+            else:
+                messagebox.showerror("错误", f"删除失败: {resp.text}")
+        except Exception as e:
+            messagebox.showerror("错误", f"删除失败: {e}")
+
+    def _toggle_rule(self, enable):
+        selected = self.rule_tree.selection()
+        if not selected:
+            messagebox.showinfo("提示", "请先选择一条规则")
+            return
+        iid = selected[0]
+        if not iid.startswith("nlp-"):
+            messagebox.showinfo("提示", "仅 NLP 规则支持启用/禁用")
+            return
+        try:
+            resp = requests.put(f"{API_BASE}/nlp-rules/{iid.split('-')[1]}/toggle", headers=admin_headers(), timeout=3)
             if not self._check_resp(resp):
                 return
             if resp.status_code == 200:
                 self._append_log("✅ NLP规则状态已切换")
-                self._load_nlp_rules_async()
+                self._load_rules_async()
             else:
                 messagebox.showerror("错误", f"操作失败: {resp.text}")
         except Exception as e:
             messagebox.showerror("错误", f"操作失败: {e}")
 
-    def _delete_nlp_rule(self):
-        selected = self.nlp_tree.selection()
-        if not selected:
-            messagebox.showinfo("提示", "请先选择一条规则")
-            return
-        if not messagebox.askyesno("确认", "确定删除选中的规则吗？"):
-            return
-        index = self.nlp_tree.index(selected[0])
-        try:
-            resp = requests.delete(f"{API_BASE}/nlp-rules/{index}", headers=admin_headers(), timeout=3)
-            if not self._check_resp(resp):
-                return
-            if resp.status_code == 200:
-                self._append_log("✅ NLP规则已删除")
-                self._load_nlp_rules_async()
-            else:
-                messagebox.showerror("错误", f"删除失败: {resp.text}")
-        except Exception as e:
-            messagebox.showerror("错误", f"删除失败: {e}")
-
-    # ---- 关键词/正则规则 ----
-    def _create_keyword_tab(self):
-        tab = tk.Frame(self.notebook, bg='white')
-        self.notebook.add(tab, text="🔑 关键词规则")
-
-        toolbar = tk.Frame(tab, bg='white')
-        toolbar.pack(fill='x', padx=5, pady=5)
-        tk.Label(toolbar, text="类型:", bg='white').pack(side='left', padx=5)
-        self.kw_type_var = tk.StringVar(value="关键词")
-        ttk.Combobox(toolbar, textvariable=self.kw_type_var, values=["关键词", "正则"],
-                     width=6, state='readonly').pack(side='left', padx=5)
-        tk.Label(toolbar, text="内容:", bg='white').pack(side='left', padx=5)
-        self.kw_entry = tk.Entry(toolbar, width=15)
-        self.kw_entry.pack(side='left', padx=5)
-        tk.Label(toolbar, text="原因:", bg='white').pack(side='left', padx=5)
-        self.kw_reason_entry = tk.Entry(toolbar, width=18)
-        self.kw_reason_entry.pack(side='left', padx=5)
-        self._btn(toolbar, "➕ 添加", self._add_keyword_rule, bg='#4CAF50').pack(side='left', padx=5)
-        self._btn(toolbar, "🔄 刷新", self._load_keyword_rules_async, bg='#2196F3').pack(side='left', padx=5)
-
-        columns = ("类型", "内容", "原因")
-        self.kw_tree = ttk.Treeview(tab, columns=columns, show="headings", height=10)
-        for col in columns:
-            self.kw_tree.heading(col, text=col)
-            self.kw_tree.column(col, width=180)
-        scroll = ttk.Scrollbar(tab, orient="vertical", command=self.kw_tree.yview)
-        self.kw_tree.configure(yscrollcommand=scroll.set)
-        self.kw_tree.pack(side='left', fill='both', expand=True, padx=5, pady=5)
-        scroll.pack(side='right', fill='y')
-
-        action_frame = tk.Frame(tab, bg='white')
-        action_frame.pack(fill='x', pady=5)
-        self._btn(action_frame, "删除选中", self._delete_keyword_rule, bg='#f44336').pack(side='left', padx=5)
-
-        # ===== 用户自定义审核触发词（命中 → 触发 LLM 深度审核） =====
-        sep = ttk.Separator(tab, orient='horizontal')
-        sep.pack(fill='x', padx=5, pady=(8, 2))
-        tk.Label(tab, text="🧠 审核触发词（用户自定义：内容命中这些词 → 调用判定引擎深度审核）",
-                 bg='white', font=("Microsoft YaHei", 9, "bold"), fg='#1976D2').pack(anchor='w', padx=5)
-
-        sus_toolbar = tk.Frame(tab, bg='white')
-        sus_toolbar.pack(fill='x', padx=5, pady=2)
-        tk.Label(sus_toolbar, text="触发词:", bg='white').pack(side='left', padx=5)
-        self.sus_entry = tk.Entry(sus_toolbar, width=20)
-        self.sus_entry.pack(side='left', padx=5)
-        self._btn(sus_toolbar, "➕ 添加", self._add_suspicious, bg='#4CAF50').pack(side='left', padx=5)
-        self._btn(sus_toolbar, "🔄 刷新", self._load_suspicious_async, bg='#2196F3').pack(side='left', padx=5)
-        self._btn(sus_toolbar, "🗑 删除选中", self._delete_suspicious, bg='#f44336').pack(side='left', padx=5)
-
-        self.sus_list = tk.Listbox(tab, font=("Consolas", 9), height=5)
-        self.sus_list.pack(fill='x', padx=5, pady=2)
-
-    def _load_suspicious_async(self):
-        def task():
-            try:
-                resp = requests.get(f"{API_BASE}/suspicious-keywords", headers=admin_headers(), timeout=3)
-                if resp.status_code == 200:
-                    words = resp.json().get('keywords', [])
-                    self.root.after(0, lambda: self._update_suspicious_list(words))
-                    self.root.after(0, lambda: self._append_log(f"✅ 审核触发词已刷新: {len(words)} 个"))
-                elif not self._check_resp(resp):
-                    return
-            except Exception as e:
-                self.root.after(0, lambda: self._append_log(f"❌ 触发词加载异常: {e}"))
-        threading.Thread(target=task, daemon=True).start()
-
-    def _update_suspicious_list(self, words):
-        self.sus_list.delete(0, tk.END)
-        for w in words:
-            self.sus_list.insert(tk.END, w)
-
-    def _add_suspicious(self):
-        kw = self.sus_entry.get().strip()
-        if not kw:
-            messagebox.showwarning("提示", "请输入触发词")
-            return
-        try:
-            resp = requests.post(f"{API_BASE}/suspicious-keywords", json={"keyword": kw},
-                                 headers=admin_headers(True), timeout=3)
-            if not self._check_resp(resp):
-                return
-            if resp.status_code == 200:
-                self._append_log(f"✅ 已添加审核触发词: {kw}")
-                self.sus_entry.delete(0, tk.END)
-                self._load_suspicious_async()
-            else:
-                messagebox.showerror("错误", f"添加失败: {resp.text}")
-        except Exception as e:
-            messagebox.showerror("错误", f"添加失败: {e}")
-
-    def _delete_suspicious(self):
-        selection = self.sus_list.curselection()
-        if not selection:
-            messagebox.showinfo("提示", "请先选择一个触发词")
-            return
-        if not messagebox.askyesno("确认", "确定删除选中的触发词吗？"):
-            return
-        index = selection[0]
-        try:
-            resp = requests.delete(f"{API_BASE}/suspicious-keywords/{index}", headers=admin_headers(), timeout=3)
-            if not self._check_resp(resp):
-                return
-            if resp.status_code == 200:
-                self._append_log("✅ 审核触发词已删除")
-                self._load_suspicious_async()
-            else:
-                messagebox.showerror("错误", f"删除失败: {resp.text}")
-        except Exception as e:
-            messagebox.showerror("错误", f"删除失败: {e}")
-
-    def _load_keyword_rules_async(self):
-        def task():
-            try:
-                resp = requests.get(f"{API_BASE}/rules", headers=admin_headers(), timeout=3)
-                if resp.status_code == 200:
-                    rules = resp.json().get('rules', [])
-                    self.root.after(0, lambda: self._update_kw_tree(rules))
-                    self.root.after(0, lambda: self._append_log(f"✅ 规则已刷新: {len(rules)} 条"))
-                elif not self._check_resp(resp):
-                    return
-            except Exception as e:
-                self.root.after(0, lambda: self._append_log(f"❌ 规则加载异常: {e}"))
-        threading.Thread(target=task, daemon=True).start()
-
-    def _update_kw_tree(self, rules):
-        for item in self.kw_tree.get_children():
-            self.kw_tree.delete(item)
-        for r in rules:
-            type_label = "关键词" if r.get('type') == 'keyword' else ("正则" if r.get('type') == 'regex' else r.get('type', ''))
-            self.kw_tree.insert("", "end", values=(type_label, r.get('pattern', ''), r.get('reason', '')))
-
-    def _add_keyword_rule(self):
-        pattern = self.kw_entry.get().strip()
-        reason = self.kw_reason_entry.get().strip()
-        if not pattern:
-            messagebox.showwarning("提示", "请输入内容")
-            return
-        type_map = {"关键词": "keyword", "正则": "regex"}
-        rule_type = type_map.get(self.kw_type_var.get(), "keyword")
-        try:
-            resp = requests.post(f"{API_BASE}/rules", json={
-                "type": rule_type, "pattern": pattern, "reason": reason or f"命中关键词: {pattern}"
-            }, headers=admin_headers(True), timeout=3)
-            if not self._check_resp(resp):
-                return
-            if resp.status_code == 200:
-                self._append_log(f"✅ 规则已添加: [{self.kw_type_var.get()}] {pattern}")
-                self.kw_entry.delete(0, tk.END)
-                self.kw_reason_entry.delete(0, tk.END)
-                self._load_keyword_rules_async()
-            else:
-                messagebox.showerror("错误", f"添加失败: {resp.text}")
-        except Exception as e:
-            messagebox.showerror("错误", f"添加失败: {e}")
-
-    def _delete_keyword_rule(self):
-        selected = self.kw_tree.selection()
-        if not selected:
-            messagebox.showinfo("提示", "请先选择一条规则")
-            return
-        if not messagebox.askyesno("确认", "确定删除选中的规则吗？"):
-            return
-        index = self.kw_tree.index(selected[0])
-        try:
-            resp = requests.delete(f"{API_BASE}/rules/{index}", headers=admin_headers(), timeout=3)
-            if not self._check_resp(resp):
-                return
-            if resp.status_code == 200:
-                self._append_log("✅ 规则已删除")
-                self._load_keyword_rules_async()
-            else:
-                messagebox.showerror("错误", f"删除失败: {resp.text}")
-        except Exception as e:
-            messagebox.showerror("错误", f"删除失败: {e}")
 
     # ---- 工具白名单 ----
     def _create_whitelist_tab(self):
