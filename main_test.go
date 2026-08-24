@@ -12,9 +12,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"golang.org/x/text/encoding/simplifiedchinese"
 )
 
 // ============================================================
@@ -1454,4 +1456,50 @@ func TestBehaviorAnalysis(t *testing.T) {
 		t.Error("随机间隔不应判定为机器特征")
 	}
 	resetBehavior()
+}
+
+// ============================================================
+// 编码规范化（GBK 等非 UTF-8 输入）
+// ============================================================
+
+func TestNormalizeToUTF8(t *testing.T) {
+	// 合法 UTF-8 原样返回
+	if normalizeToUTF8("你好，世界") != "你好，世界" {
+		t.Error("合法 UTF-8 不应被改动")
+	}
+	// GBK 字节 → UTF-8
+	gbkBytes, err := simplifiedchinese.GBK.NewEncoder().Bytes([]byte("删除数据库"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := normalizeToUTF8(string(gbkBytes))
+	if got != "删除数据库" {
+		t.Fatalf("GBK 转码失败: %q", got)
+	}
+	// 非法字节兜底后仍为合法 UTF-8
+	got2 := normalizeToUTF8(string([]byte{0xff, 0xfe, 0x00, 0x41}))
+	if !utf8.ValidString(got2) {
+		t.Error("兜底后应为合法 UTF-8")
+	}
+}
+
+func TestGuardGBKInput(t *testing.T) {
+	srv := setupTestServer(t)
+	// 用 GBK 编码的"删除数据库"作为输入（模拟 GBK 环境业务输出）
+	gbkBytes, _ := simplifiedchinese.GBK.NewEncoder().Bytes([]byte("删除数据库"))
+	body := append([]byte(`{"session_id":"gbk1","user_id":"u1","action_type":"user_input","content":"`), gbkBytes...)
+	body = append(body, []byte(`"}`)...)
+
+	req, _ := http.NewRequest("POST", srv.URL+"/v1/guard", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result["decision"] != "block" {
+		t.Fatalf("GBK 编码的违规内容应被拦截（规范化后命中规则）: %v", result)
+	}
 }

@@ -916,10 +916,21 @@ func guardHandler(c *gin.Context) {
 
 	var req GuardRequest
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1<<20) // 请求体限制 1MB
-	if err := c.ShouldBindJSON(&req); err != nil {
+	// 先读取原始 body 并做编码规范化（GBK→UTF-8），
+	// 避免非 UTF-8 内容在 JSON 解析阶段被替换成乱码（�）导致规则失效
+	rawBody, err := io.ReadAll(c.Request.Body)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
 		return
 	}
+	rawBody = []byte(normalizeToUTF8(string(rawBody)))
+	if err := json.Unmarshal(rawBody, &req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request"})
+		return
+	}
+	// 二次规范化（兜底，处理字段级边缘情况）
+	req.Content = normalizeToUTF8(req.Content)
+	req.OutputContent = normalizeToUTF8(req.OutputContent)
 
 	if req.SessionID != "" {
 		log.Printf("🔍 限流检查: session=%s", req.SessionID)
