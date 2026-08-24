@@ -284,6 +284,20 @@ class GuardConfigGUI:
         tk.Label(header, text="🛡️ 安全交互守护智能体", font=("Microsoft YaHei", 16, "bold"),
                  bg='#f5f5f5', fg='#333').pack(side='left')
 
+        # 判定引擎模式一键切换（本地 / 云端 / 混合）
+        mode_frame = tk.Frame(header, bg='#f5f5f5')
+        mode_frame.pack(side='left', padx=18)
+        tk.Label(mode_frame, text="判定引擎:", bg='#f5f5f5', font=("Microsoft YaHei", 9)).pack(side='left')
+        self.mode_btns = {}
+        for m, label, tip in (("local", "本地", "只用本地 Ollama 模型审核\n优点: 数据不出网/零成本/断网可用\n缺点: 判定力受本地模型限制"),
+                              ("cloud", "云端", "只用云端 API 审核\n优点: 判定力最强/免维护\n缺点: 内容出网/按量付费"),
+                              ("hybrid", "混合", "本地初筛 + 云端终审（推荐）\n优点: 隐私与能力平衡/双保险\n缺点: 可疑请求两次调用")):
+            b = self._btn(mode_frame, label, lambda x=m: self._set_mode(x), bg='#E0E0E0', fg='#555', width=4)
+            b.pack(side='left', padx=2)
+            ToolTip(b, tip)
+            self.mode_btns[m] = b
+        self._update_mode_buttons()
+
         btn = tk.Frame(header, bg='#f5f5f5')
         btn.pack(side='right')
         self.start_btn = self._btn(btn, "▶ 启动", self.start_service, bg='#4CAF50', width=7)
@@ -296,6 +310,40 @@ class GuardConfigGUI:
         self.status_label = tk.Label(btn, text="状态: 未启动", font=("Microsoft YaHei", 10, "bold"),
                                      bg='#f5f5f5', fg='red')
         self.status_label.pack(side='left', padx=10)
+
+    def _update_mode_buttons(self):
+        """按当前模式高亮顶部切换按钮。"""
+        mode = self.llm_mode_var.get()
+        for m, b in self.mode_btns.items():
+            if m == mode:
+                b.config(bg='#4CAF50', fg='white')
+            else:
+                b.config(bg='#E0E0E0', fg='#555')
+
+    def _set_mode(self, mode):
+        """一键切换判定引擎模式（读取当前配置改 mode 后保存，热加载生效）。"""
+        if not self._check_service_running():
+            messagebox.showwarning("警告", "服务未运行，无法切换模式")
+            return
+        self.llm_mode_var.set(mode)
+        self._update_mode_buttons()
+
+        def task():
+            try:
+                resp = requests.get(f"{API_BASE}/config", headers=admin_headers(), timeout=3)
+                if resp.status_code != 200:
+                    self.root.after(0, lambda: self._check_resp(resp))
+                    return
+                cfg = resp.json().get('config', {})
+                cfg['llm_judge_mode'] = mode
+                r2 = requests.put(f"{API_BASE}/config", json=cfg, headers=admin_headers(True), timeout=3)
+                if r2.status_code == 200:
+                    self.root.after(0, lambda: self._append_log(f"✅ 判定引擎模式已切换为 {mode}"))
+                else:
+                    self.root.after(0, lambda: self._check_resp(r2))
+            except Exception as e:
+                self.root.after(0, lambda: self._append_log(f"❌ 模式切换失败: {e}"))
+        threading.Thread(target=task, daemon=True).start()
 
     def _save_config(self):
         if not self._check_service_running():
@@ -404,6 +452,7 @@ class GuardConfigGUI:
         # 安全审核 LLM 配置同步
         if cfg.get('llm_judge_mode'):
             self.llm_mode_var.set(cfg['llm_judge_mode'])
+            self._update_mode_buttons()  # 同步顶部模式切换按钮高亮
         if cfg.get('llm_judge_url'):
             self.llm_url_var.set(cfg['llm_judge_url'])
         if cfg.get('llm_judge_model'):
