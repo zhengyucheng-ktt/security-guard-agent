@@ -449,6 +449,9 @@ class GuardConfigGUI:
             self.rep_var.set(bool(cfg['enable_reputation_score']))
         if 'guard_api_key' in cfg:
             self.guard_key_var.set(cfg.get('guard_api_key') or '')
+            if hasattr(self, 'integ_key_label'):
+                self._update_integ_key_display()
+                self._update_integ_code()
         # 安全审核 LLM 配置同步
         if cfg.get('llm_judge_mode'):
             self.llm_mode_var.set(cfg['llm_judge_mode'])
@@ -482,6 +485,7 @@ class GuardConfigGUI:
         self.notebook.pack(fill='both', expand=True, padx=5, pady=5)
 
         self._create_log_tab()
+        self._create_integration_tab()
         self._create_rules_tab()
 
         self._create_whitelist_tab()
@@ -489,6 +493,132 @@ class GuardConfigGUI:
         self._create_audit_tab()
         self._create_config_tab()
         self._create_watermark_tab()
+
+    # ---- 业务接入（把 guard 嵌入业务智能体的一站式入口） ----
+    def _create_integration_tab(self):
+        tab = tk.Frame(self.notebook, bg='white')
+        self.notebook.add(tab, text="🤝 业务接入")
+
+        # 步骤引导
+        guide = ("把 guard 嵌入你的业务智能体，只需 3 步：\n"
+                 "① 获取业务调用密钥（点「生成密钥」自动生成并保存）\n"
+                 "② 复制右侧接入代码到你的项目\n"
+                 "③ 点「测试接入」验证连通与脱敏效果")
+        tk.Label(tab, text=guide, bg='#e8f5e9', fg='#2e7d32', justify='left',
+                 font=("Microsoft YaHei", 9), padx=10, pady=8).pack(fill='x', padx=10, pady=(10, 6))
+
+        # 密钥区
+        key_frame = tk.Frame(tab, bg='white')
+        key_frame.pack(fill='x', padx=10, pady=4)
+        tk.Label(key_frame, text="业务调用密钥 (guard_api_key):", bg='white',
+                 font=("Microsoft YaHei", 9)).pack(side='left')
+        self.integ_key_label = tk.Label(key_frame, text="", bg='#fff3e0', fg='#e65100',
+                                        font=("Consolas", 9), padx=6, pady=3)
+        self.integ_key_label.pack(side='left', padx=8)
+        self._btn(key_frame, "🔑 生成密钥", self._gen_guard_key, bg='#9C27B0', width=10).pack(side='left', padx=4)
+        self._btn(key_frame, "📋 复制密钥", self._copy_guard_key, bg='#607D8B', width=10).pack(side='left', padx=4)
+
+        # 接入代码
+        code_frame = tk.Frame(tab, bg='white')
+        code_frame.pack(fill='both', expand=True, padx=10, pady=6)
+        tk.Label(code_frame, text="接入代码（复制到你的业务项目，替换 my_llm 为你的智能体函数）：",
+                 bg='white', font=("Microsoft YaHei", 9)).pack(anchor='w')
+        self.integ_code = scrolledtext.ScrolledText(code_frame, height=10, font=("Consolas", 10),
+                                                    bg='#1e1e1e', fg='#d4d4d4', wrap='none')
+        self.integ_code.pack(fill='both', expand=True, pady=4)
+        self._btn(code_frame, "📋 复制代码", self._copy_integ_code, bg='#2196F3', width=10).pack(anchor='w')
+
+        # 测试区
+        test_frame = tk.Frame(tab, bg='white')
+        test_frame.pack(fill='x', padx=10, pady=6)
+        self._btn(test_frame, "🧪 测试接入（输入审核+输出脱敏）", self._test_integration,
+                  bg='#4CAF50', width=28).pack(side='left')
+        self.integ_test_result = tk.Label(test_frame, text="", bg='white', fg='#333',
+                                          font=("Microsoft YaHei", 9), justify='left', anchor='w')
+        self.integ_test_result.pack(side='left', padx=10)
+
+        self._update_integ_key_display()
+        self._update_integ_code()
+
+    def _update_integ_key_display(self):
+        key = self.guard_key_var.get().strip()
+        if key:
+            self.integ_key_label.config(text=key[:16] + "…" if len(key) > 16 else key)
+        else:
+            self.integ_key_label.config(text="（未设置——点「生成密钥」自动创建）")
+
+    def _update_integ_code(self):
+        key = self.guard_key_var.get().strip()
+        key_line = f'guard = Guard(api_key="{key}")' if key else 'guard = Guard()  # 服务端未设密钥时无需填写'
+        code = (f'from guard_sdk import Guard\n'
+                f'{key_line}\n'
+                f'safe_llm = guard.wrap_llm(my_llm)   # my_llm 是你的业务智能体函数\n'
+                f'reply = safe_llm("用户说的话")      # 返回已脱敏+水印的安全回复\n')
+        self.integ_code.delete(1.0, tk.END)
+        self.integ_code.insert(tk.END, code)
+
+    def _gen_guard_key(self):
+        """生成随机业务调用密钥并保存到服务端配置。"""
+        import secrets
+        if not self._check_service_running():
+            messagebox.showwarning("警告", "服务未运行，无法保存密钥")
+            return
+        new_key = "sk-" + secrets.token_hex(16)
+        self.guard_key_var.set(new_key)
+        self._save_config()  # 保存全部配置（含新密钥）
+        self._update_integ_key_display()
+        self._update_integ_code()
+        self._append_log("✅ 已生成新的业务调用密钥")
+
+    def _copy_guard_key(self):
+        key = self.guard_key_var.get().strip()
+        if not key:
+            messagebox.showwarning("提示", "请先生成密钥")
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(key)
+        self._append_log("✅ 业务调用密钥已复制")
+
+    def _copy_integ_code(self):
+        code = self.integ_code.get(1.0, tk.END).strip()
+        if not code:
+            return
+        self.root.clipboard_clear()
+        self.root.clipboard_append(code)
+        self._append_log("✅ 接入代码已复制")
+
+    def _test_integration(self):
+        """测试接入：调 /v1/guard 验证输入审核 + 输出脱敏。"""
+        def task():
+            try:
+                headers = {"Content-Type": "application/json"}
+                key = self.guard_key_var.get().strip()
+                if key:
+                    headers["X-Guard-Key"] = key
+                # 输入审核（正常输入应放行）
+                r1 = requests.post("http://127.0.0.1:8080/v1/guard",
+                                   json={"session_id": "gui-test", "user_id": "u-gui",
+                                         "action_type": "user_input", "content": "今天天气怎么样"},
+                                   headers=headers, timeout=5).json()
+                # 输出脱敏
+                r2 = requests.post("http://127.0.0.1:8080/v1/guard",
+                                   json={"session_id": "gui-test", "user_id": "u-gui",
+                                         "action_type": "output",
+                                         "output_content": "用户手机号 13212345678"},
+                                   headers=headers, timeout=5).json()
+                if r1.get("decision") == "allow" and r2.get("decision") == "allow":
+                    safe = r2.get("safe_output", "")
+                    # 去掉水印后展示
+                    clean = safe.split("\u200b")[0]
+                    self.root.after(0, lambda: self.integ_test_result.config(
+                        text=f"✅ 连通正常 | 脱敏示例: {clean}", fg='green'))
+                else:
+                    self.root.after(0, lambda: self.integ_test_result.config(
+                        text=f"⚠️ 异常: 输入={r1.get('decision')} 输出={r2.get('decision')}", fg='orange'))
+            except Exception as e:
+                self.root.after(0, lambda: self.integ_test_result.config(
+                    text=f"❌ 连接失败: {e}（请先启动服务）", fg='red'))
+        threading.Thread(target=task, daemon=True).start()
 
     # ---- 服务日志 ----
     def _create_log_tab(self):
