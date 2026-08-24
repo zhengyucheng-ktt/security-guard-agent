@@ -35,6 +35,8 @@ curl http://localhost:8080/admin/api/rules -H "X-Admin-Token: <token>"
 
 JWT 密钥同理自动生成并持久化到 `.jwt_secret`（生产环境建议用 `JWT_SECRET` 环境变量注入）。
 
+> 📖 **完整教程**：[业务对接与云端模型教程.md](业务对接与云端模型教程.md) —— 含四环节对接流程、云端判定模型接入（DeepSeek/通义/GLM/Kimi 端点）、验证与故障排查。
+
 ## 黑箱接入（推荐给非技术用户）
 
 不懂内部机制也能接入：只需 `guard_sdk.py`，几行代码获得完整防护（输入审核 / 工具防护 / 输出脱敏水印），连 session/user 标识都不用管。
