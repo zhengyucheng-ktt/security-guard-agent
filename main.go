@@ -265,6 +265,10 @@ var (
 	nlpRules   []NLPRule
 	nlpRulesMu sync.RWMutex
 
+	// 用户自定义审核触发词（命中则触发 LLM 深度审核）
+	customSuspiciousKeywords []string
+	suspiciousMu             sync.RWMutex
+
 	limiters     = make(map[string]*sessionLimiter)
 	limiterMutex sync.Mutex
 
@@ -521,6 +525,86 @@ func saveWhitelist() error {
 }
 
 
+
+// ============================================================
+// 用户自定义审核触发词（命中 → 触发 LLM 深度审核）
+// ============================================================
+
+const suspiciousKeywordsFile = "suspicious_keywords.json"
+
+func loadCustomSuspiciousKeywords() {
+	data, err := os.ReadFile(suspiciousKeywordsFile)
+	if err != nil {
+		return
+	}
+	var words []string
+	if err := json.Unmarshal(data, &words); err != nil {
+		log.Printf("⚠️ %s 解析失败: %v", suspiciousKeywordsFile, err)
+		return
+	}
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = words
+	suspiciousMu.Unlock()
+	log.Printf("📝 已加载 %d 个自定义审核触发词", len(words))
+}
+
+func saveCustomSuspiciousKeywords() error {
+	suspiciousMu.RLock()
+	data, err := json.MarshalIndent(customSuspiciousKeywords, "", "  ")
+	suspiciousMu.RUnlock()
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(suspiciousKeywordsFile, data, 0644)
+}
+
+func adminGetSuspiciousKeywords(c *gin.Context) {
+	suspiciousMu.RLock()
+	list := make([]string, len(customSuspiciousKeywords))
+	copy(list, customSuspiciousKeywords)
+	suspiciousMu.RUnlock()
+	c.JSON(http.StatusOK, gin.H{"keywords": list})
+}
+
+func adminAddSuspiciousKeyword(c *gin.Context) {
+	var req struct {
+		Keyword string `json:"keyword"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Keyword) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid keyword"})
+		return
+	}
+	kw := strings.TrimSpace(req.Keyword)
+	suspiciousMu.Lock()
+	for _, k := range customSuspiciousKeywords {
+		if k == kw {
+			suspiciousMu.Unlock()
+			c.JSON(http.StatusOK, gin.H{"status": "ok", "duplicate": true})
+			return
+		}
+	}
+	customSuspiciousKeywords = append(customSuspiciousKeywords, kw)
+	suspiciousMu.Unlock()
+	saveCustomSuspiciousKeywords()
+	log.Printf("📝 已添加自定义审核触发词: %s", kw)
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
+
+func adminDeleteSuspiciousKeyword(c *gin.Context) {
+	index, err := strconv.Atoi(c.Param("index"))
+	suspiciousMu.RLock()
+	n := len(customSuspiciousKeywords)
+	suspiciousMu.RUnlock()
+	if err != nil || index < 0 || index >= n {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid index"})
+		return
+	}
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = append(customSuspiciousKeywords[:index], customSuspiciousKeywords[index+1:]...)
+	suspiciousMu.Unlock()
+	saveCustomSuspiciousKeywords()
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}
 
 // ============================================================
 // 检测函数
@@ -1681,6 +1765,10 @@ func isSuspicious(content string) bool {
 		"ignore", "instructions", "system prompt", "bypass", "jailbreak",
 		"reveal", "disregard", "override", "forget", "previous instructions",
 	}
+	// 合并用户自定义触发词
+	suspiciousMu.RLock()
+	keywords = append(keywords, customSuspiciousKeywords...)
+	suspiciousMu.RUnlock()
 	// 对归一化变体也检测（对抗混淆）
 	for _, cand := range matchCandidates(content) {
 		contentLower := strings.ToLower(cand)
@@ -1736,6 +1824,7 @@ func main() {
 
 	loadRules()
 	loadWhitelist()
+	loadCustomSuspiciousKeywords()
 	loadPersistedSessions()   // 恢复上次运行的会话积分（内存模式）
 	loadPersistedReputation() // 恢复账号信誉分
 
@@ -1786,6 +1875,10 @@ func setupRouter() *gin.Engine {
 	admin.POST("/nlp-rules", adminAddNLPRule)
 	admin.DELETE("/nlp-rules/:index", adminDeleteNLPRule)
 	admin.PUT("/nlp-rules/:index/toggle", adminToggleNLPRule)
+
+	admin.GET("/suspicious-keywords", adminGetSuspiciousKeywords)
+	admin.POST("/suspicious-keywords", adminAddSuspiciousKeyword)
+	admin.DELETE("/suspicious-keywords/:index", adminDeleteSuspiciousKeyword)
 
 	admin.GET("/config", adminGetConfig)
 	admin.PUT("/config", adminUpdateConfig)

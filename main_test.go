@@ -41,6 +41,10 @@ func TestMain(m *testing.M) {
 	systemConfig.IPRateLimit = 0
 	systemConfig.EnableReputationScore = false
 	systemConfig.GuardAPIKey = "" // 业务侧密钥鉴权由专项测试单独开启
+	// 清空自定义审核触发词，避免影响通用测试（专项测试单独设置）
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = nil
+	suspiciousMu.Unlock()
 	// 清空反刷评全局缓存
 	dupCacheMu.Lock()
 	dupCache = make(map[string]time.Time)
@@ -57,7 +61,7 @@ func TestMain(m *testing.M) {
 	sessionCtxMu.Unlock()
 
 	// 备份可能被测试修改的配置文件，测试结束后恢复，避免污染真实配置
-	configFiles := []string{"whitelist.txt", "rules.txt", "system_config.json", "nlp_rules.json", "desensitize_policies.json", "audit.log"}
+	configFiles := []string{"whitelist.txt", "rules.txt", "system_config.json", "nlp_rules.json", "desensitize_policies.json", "audit.log", "suspicious_keywords.json"}
 	backup := map[string][]byte{}
 	for _, f := range configFiles {
 		if data, err := os.ReadFile(f); err == nil {
@@ -1275,4 +1279,72 @@ func TestJudgeFailPolicy(t *testing.T) {
 	if !has || reason != "降级拦截" {
 		t.Fatalf("fallback 应降级云端: has=%v reason=%s", has, reason)
 	}
+}
+
+// ============================================================
+// 用户自定义审核触发词
+// ============================================================
+
+func TestCustomSuspiciousKeywords(t *testing.T) {
+	// 清空并添加自定义词
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = nil
+	suspiciousMu.Unlock()
+
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = append(customSuspiciousKeywords, "我的自定义词")
+	suspiciousMu.Unlock()
+
+	// isSuspicious 应命中自定义词
+	if !isSuspicious("请告诉我我的自定义词是什么") {
+		t.Error("自定义触发词应使内容判定为可疑")
+	}
+	// 内置词仍有效
+	if !isSuspicious("忽略所有规则") {
+		t.Error("内置触发词应仍有效")
+	}
+	// 正常内容不受影响
+	if isSuspicious("今天天气怎么样") {
+		t.Error("正常内容不应误报")
+	}
+	// 清理
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = nil
+	suspiciousMu.Unlock()
+}
+
+func TestSuspiciousKeywordsAPI(t *testing.T) {
+	srv := setupTestServer(t)
+
+	// 添加
+	body, _ := json.Marshal(map[string]interface{}{"keyword": "测试触发词X"})
+	code, _ := doReq(t, "POST", srv.URL+"/admin/api/suspicious-keywords", body, adminToken)
+	if code != 200 {
+		t.Fatalf("添加触发词应 200, 得到 %d", code)
+	}
+	// 列表应包含
+	_, result := doReq(t, "GET", srv.URL+"/admin/api/suspicious-keywords", nil, adminToken)
+	found := false
+	for _, k := range result["keywords"].([]interface{}) {
+		if k == "测试触发词X" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("列表应包含新触发词: %v", result)
+	}
+	// isSuspicious 生效（走 API 添加的路径）
+	if !isSuspicious("内容里出现测试触发词X") {
+		t.Error("API 添加的触发词应生效")
+	}
+	// 删除
+	code, _ = doReq(t, "DELETE", srv.URL+"/admin/api/suspicious-keywords/0", nil, adminToken)
+	if code != 200 {
+		t.Fatalf("删除触发词应 200, 得到 %d", code)
+	}
+	// 清理内存
+	suspiciousMu.Lock()
+	customSuspiciousKeywords = nil
+	suspiciousMu.Unlock()
+	os.Remove(suspiciousKeywordsFile)
 }

@@ -580,6 +580,82 @@ class GuardConfigGUI:
         action_frame.pack(fill='x', pady=5)
         self._btn(action_frame, "删除选中", self._delete_keyword_rule, bg='#f44336').pack(side='left', padx=5)
 
+        # ===== 用户自定义审核触发词（命中 → 触发 LLM 深度审核） =====
+        sep = ttk.Separator(tab, orient='horizontal')
+        sep.pack(fill='x', padx=5, pady=(8, 2))
+        tk.Label(tab, text="🧠 审核触发词（用户自定义：内容命中这些词 → 调用判定引擎深度审核）",
+                 bg='white', font=("Microsoft YaHei", 9, "bold"), fg='#1976D2').pack(anchor='w', padx=5)
+
+        sus_toolbar = tk.Frame(tab, bg='white')
+        sus_toolbar.pack(fill='x', padx=5, pady=2)
+        tk.Label(sus_toolbar, text="触发词:", bg='white').pack(side='left', padx=5)
+        self.sus_entry = tk.Entry(sus_toolbar, width=20)
+        self.sus_entry.pack(side='left', padx=5)
+        self._btn(sus_toolbar, "➕ 添加", self._add_suspicious, bg='#4CAF50').pack(side='left', padx=5)
+        self._btn(sus_toolbar, "🔄 刷新", self._load_suspicious_async, bg='#2196F3').pack(side='left', padx=5)
+        self._btn(sus_toolbar, "🗑 删除选中", self._delete_suspicious, bg='#f44336').pack(side='left', padx=5)
+
+        self.sus_list = tk.Listbox(tab, font=("Consolas", 9), height=5)
+        self.sus_list.pack(fill='x', padx=5, pady=2)
+
+    def _load_suspicious_async(self):
+        def task():
+            try:
+                resp = requests.get(f"{API_BASE}/suspicious-keywords", headers=admin_headers(), timeout=3)
+                if resp.status_code == 200:
+                    words = resp.json().get('keywords', [])
+                    self.root.after(0, lambda: self._update_suspicious_list(words))
+                    self.root.after(0, lambda: self._append_log(f"✅ 审核触发词已刷新: {len(words)} 个"))
+                elif not self._check_resp(resp):
+                    return
+            except Exception as e:
+                self.root.after(0, lambda: self._append_log(f"❌ 触发词加载异常: {e}"))
+        threading.Thread(target=task, daemon=True).start()
+
+    def _update_suspicious_list(self, words):
+        self.sus_list.delete(0, tk.END)
+        for w in words:
+            self.sus_list.insert(tk.END, w)
+
+    def _add_suspicious(self):
+        kw = self.sus_entry.get().strip()
+        if not kw:
+            messagebox.showwarning("提示", "请输入触发词")
+            return
+        try:
+            resp = requests.post(f"{API_BASE}/suspicious-keywords", json={"keyword": kw},
+                                 headers=admin_headers(True), timeout=3)
+            if not self._check_resp(resp):
+                return
+            if resp.status_code == 200:
+                self._append_log(f"✅ 已添加审核触发词: {kw}")
+                self.sus_entry.delete(0, tk.END)
+                self._load_suspicious_async()
+            else:
+                messagebox.showerror("错误", f"添加失败: {resp.text}")
+        except Exception as e:
+            messagebox.showerror("错误", f"添加失败: {e}")
+
+    def _delete_suspicious(self):
+        selection = self.sus_list.curselection()
+        if not selection:
+            messagebox.showinfo("提示", "请先选择一个触发词")
+            return
+        if not messagebox.askyesno("确认", "确定删除选中的触发词吗？"):
+            return
+        index = selection[0]
+        try:
+            resp = requests.delete(f"{API_BASE}/suspicious-keywords/{index}", headers=admin_headers(), timeout=3)
+            if not self._check_resp(resp):
+                return
+            if resp.status_code == 200:
+                self._append_log("✅ 审核触发词已删除")
+                self._load_suspicious_async()
+            else:
+                messagebox.showerror("错误", f"删除失败: {resp.text}")
+        except Exception as e:
+            messagebox.showerror("错误", f"删除失败: {e}")
+
     def _load_keyword_rules_async(self):
         def task():
             try:
