@@ -1798,27 +1798,27 @@ func main() {
 	defer persistSessions()   // 退出时保存会话积分（内存模式）
 	defer persistReputation() // 退出时保存账号信誉分
 
-	// 初始化 Redis（支持环境变量）
+	// 初始化 Redis（可选：仅多实例共享会话状态时需要；单实例自动用内存模式+文件持久化）
 	redisClient = redis.NewClient(&redis.Options{
 		Addr: getEnv("REDIS_ADDR", "127.0.0.1:6379"),
 		Password:     getEnv("REDIS_PASSWORD", ""),
 		DB:           getEnvInt("REDIS_DB", 0),
 		PoolSize:     getEnvInt("REDIS_POOL_SIZE", 10),
-		MinIdleConns: getEnvInt("REDIS_MIN_IDLE", 5),
-		DialTimeout:  3 * time.Second,
-		ReadTimeout:  2 * time.Second,
-		WriteTimeout: 2 * time.Second,
+		MinIdleConns: getEnvInt("REDIS_MIN_IDLE", 0), // 无 Redis 时不保持空闲连接，避免启动噪音
+		DialTimeout:  1 * time.Second,                // 缩短探测超时，Redis 不可用时不拖慢启动
+		ReadTimeout:  1 * time.Second,
+		WriteTimeout: 1 * time.Second,
 	})
 
-	ctxTimeout, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	ctxTimeout, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
 	defer cancel()
 
 	pong, err := redisClient.Ping(ctxTimeout).Result()
 	if err != nil {
-		log.Printf("⚠️ Redis 连接失败: %v，切换到内存缓存模式", err)
+		log.Printf("ℹ️ Redis 不可用（%v），使用内存模式（单实例无需 Redis，会话数据自动持久化到本地文件）", err)
 		useMemoryMode = true
 	} else {
-		log.Printf("✅ Redis 连接成功: %s", pong)
+		log.Printf("✅ Redis 连接成功: %s（多实例共享模式）", pong)
 		useMemoryMode = false
 	}
 

@@ -138,6 +138,45 @@ def kill_process_on_port(port):
         return False, f"异常: {e}"
 
 
+class ToolTip:
+    """简单的停留悬浮提示（hover tooltip）。"""
+
+    def __init__(self, widget, text, delay=500):
+        self.widget = widget
+        self.text = text
+        self.delay = delay
+        self.tip_window = None
+        self.after_id = None
+        widget.bind("<Enter>", self._schedule, add="+")
+        widget.bind("<Leave>", self._hide, add="+")
+        widget.bind("<ButtonPress>", self._hide, add="+")
+
+    def _schedule(self, _e):
+        self._hide()
+        self.after_id = self.widget.after(self.delay, self._show)
+
+    def _show(self):
+        if self.tip_window or not self.text:
+            return
+        x = self.widget.winfo_rootx() + 18
+        y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(True)
+        tw.wm_geometry(f"+{x}+{y}")
+        tk.Label(tw, text=self.text, justify='left', bg="#ffffe0", fg="#333",
+                 relief="solid", borderwidth=1, padx=8, pady=6,
+                 font=("Microsoft YaHei", 9), wraplength=430).pack()
+        self.tip_window = tw
+
+    def _hide(self, _e=None):
+        if self.after_id:
+            self.widget.after_cancel(self.after_id)
+            self.after_id = None
+        if self.tip_window:
+            self.tip_window.destroy()
+            self.tip_window = None
+
+
 class GuardConfigGUI:
     def __init__(self, root):
         global app
@@ -900,9 +939,20 @@ class GuardConfigGUI:
         canvas.bind("<Enter>", _bind_wheel)
         canvas.bind("<Leave>", _unbind_wheel)
 
-        tk.Label(frame, text="差分隐私:", bg='white', font=("Microsoft YaHei", 10)).grid(row=0, column=0, sticky='w', pady=6)
-        tk.Checkbutton(frame, variable=self.dp_var, bg='white',
-                       font=("Microsoft YaHei", 10)).grid(row=0, column=1, sticky='w', pady=6)
+        dp_label = tk.Label(frame, text="差分隐私:", bg='white', font=("Microsoft YaHei", 10))
+        dp_label.grid(row=0, column=0, sticky='w', pady=6)
+        dp_check = tk.Checkbutton(frame, variable=self.dp_var, bg='white',
+                                  font=("Microsoft YaHei", 10))
+        dp_check.grid(row=0, column=1, sticky='w', pady=6)
+        ToolTip(dp_label, "差分隐私（Differential Privacy）\n"
+                          "一种隐私保护技术：在查询/统计结果中加入受控噪声，\n"
+                          "使外部无法从输出反推单个用户的数据。\n\n"
+                          "本项目当前为预留能力：开启后对输出统计类数据加入噪声。\n"
+                          "注意：噪声会降低统计结果精确度，一般仅对聚合统计类输出启用，\n"
+                          "普通业务对话建议保持关闭。")
+        ToolTip(dp_check, "差分隐私（Differential Privacy）\n"
+                          "在统计结果中加入受控噪声，防止从输出反推单个用户数据。\n"
+                          "当前为预留能力，普通业务建议关闭（噪声会降低结果精确度）。")
 
         tk.Label(frame, text="限流速率（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=1, column=0, sticky='w', pady=6)
         tk.Entry(frame, textvariable=self.rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=1, column=1, sticky='w', pady=6)
