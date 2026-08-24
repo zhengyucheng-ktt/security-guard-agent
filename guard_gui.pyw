@@ -970,6 +970,10 @@ class GuardConfigGUI:
         frame = tk.Frame(canvas, bg='white')
         canvas.create_window((0, 0), window=frame, anchor='nw')
         frame.columnconfigure(1, weight=1)
+        # 🔑 快速配置云端审核模型（弹窗，只需填 Key）
+        self._btn(frame, "🔑 快速配置云端审核模型（只需填 Key）", self._quick_cloud_setup,
+                  bg='#9C27B0', width=28).grid(row=0, column=0, columnspan=2, sticky='w', pady=(4, 10))
+
 
         # 内容尺寸变化时更新滚动区域
         frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -984,10 +988,10 @@ class GuardConfigGUI:
         canvas.bind("<Leave>", _unbind_wheel)
 
         dp_label = tk.Label(frame, text="差分隐私:", bg='white', font=("Microsoft YaHei", 10))
-        dp_label.grid(row=0, column=0, sticky='w', pady=6)
+        dp_label.grid(row=1, column=0, sticky='w', pady=6)
         dp_check = tk.Checkbutton(frame, variable=self.dp_var, bg='white',
                                   font=("Microsoft YaHei", 10))
-        dp_check.grid(row=0, column=1, sticky='w', pady=6)
+        dp_check.grid(row=1, column=1, sticky='w', pady=6)
         ToolTip(dp_label, "差分隐私（Differential Privacy）\n"
                           "一种隐私保护技术：在查询/统计结果中加入受控噪声，\n"
                           "使外部无法从输出反推单个用户的数据。\n\n"
@@ -998,84 +1002,84 @@ class GuardConfigGUI:
                           "在统计结果中加入受控噪声，防止从输出反推单个用户数据。\n"
                           "当前为预留能力，普通业务建议关闭（噪声会降低结果精确度）。")
 
-        tk.Label(frame, text="限流速率（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=1, column=0, sticky='w', pady=6)
-        tk.Entry(frame, textvariable=self.rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=1, column=1, sticky='w', pady=6)
+        tk.Label(frame, text="限流速率（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=2, column=0, sticky='w', pady=6)
+        tk.Entry(frame, textvariable=self.rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=2, column=1, sticky='w', pady=6)
 
-        tk.Label(frame, text="默认脱敏级别:", bg='white', font=("Microsoft YaHei", 10)).grid(row=2, column=0, sticky='w', pady=6)
+        tk.Label(frame, text="默认脱敏级别:", bg='white', font=("Microsoft YaHei", 10)).grid(row=3, column=0, sticky='w', pady=6)
         ttk.Combobox(frame, textvariable=self.level_var, values=["partial", "full", "minimal"],
-                     width=10, state='readonly').grid(row=2, column=1, sticky='w', pady=6)
+                     width=10, state='readonly').grid(row=3, column=1, sticky='w', pady=6)
 
-        tk.Label(frame, text="会话超时（分钟）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=3, column=0, sticky='w', pady=6)
-        tk.Entry(frame, textvariable=self.timeout_var, width=10, font=("Microsoft YaHei", 10)).grid(row=3, column=1, sticky='w', pady=6)
+        tk.Label(frame, text="会话超时（分钟）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=4, column=0, sticky='w', pady=6)
+        tk.Entry(frame, textvariable=self.timeout_var, width=10, font=("Microsoft YaHei", 10)).grid(row=4, column=1, sticky='w', pady=6)
 
         # 反刷评配置
         tk.Label(frame, text="🛡️ 反刷评（评论区 AI 机器人防御）", bg='white', font=("Microsoft YaHei", 10, "bold"),
-                 fg='#1976D2').grid(row=4, column=0, columnspan=2, sticky='w', pady=(10, 2))
+                 fg='#1976D2').grid(row=5, column=0, columnspan=2, sticky='w', pady=(10, 2))
 
-        tk.Label(frame, text="内容去重:", bg='white', font=("Microsoft YaHei", 10)).grid(row=5, column=0, sticky='w', pady=4)
+        tk.Label(frame, text="内容去重:", bg='white', font=("Microsoft YaHei", 10)).grid(row=6, column=0, sticky='w', pady=4)
         tk.Checkbutton(frame, variable=self.dup_var, bg='white',
-                       font=("Microsoft YaHei", 10)).grid(row=5, column=1, sticky='w', pady=4)
+                       font=("Microsoft YaHei", 10)).grid(row=6, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="去重窗口（分钟）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=6, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.dup_window_var, width=10, font=("Microsoft YaHei", 10)).grid(row=6, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="去重窗口（分钟）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=7, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.dup_window_var, width=10, font=("Microsoft YaHei", 10)).grid(row=7, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="账号限流（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=7, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.user_rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=7, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="账号限流（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=8, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.user_rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=8, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="IP 限流（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=8, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.ip_rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=8, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="IP 限流（次/秒）:", bg='white', font=("Microsoft YaHei", 10)).grid(row=9, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.ip_rate_var, width=10, font=("Microsoft YaHei", 10)).grid(row=9, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="账号信誉分:", bg='white', font=("Microsoft YaHei", 10)).grid(row=9, column=0, sticky='w', pady=4)
+        tk.Label(frame, text="账号信誉分:", bg='white', font=("Microsoft YaHei", 10)).grid(row=10, column=0, sticky='w', pady=4)
         tk.Checkbutton(frame, variable=self.rep_var, bg='white',
-                       font=("Microsoft YaHei", 10)).grid(row=9, column=1, sticky='w', pady=4)
+                       font=("Microsoft YaHei", 10)).grid(row=10, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="业务调用密钥:", bg='white', font=("Microsoft YaHei", 10)).grid(row=10, column=0, sticky='w', pady=4)
+        tk.Label(frame, text="业务调用密钥:", bg='white', font=("Microsoft YaHei", 10)).grid(row=11, column=0, sticky='w', pady=4)
         tk.Entry(frame, textvariable=self.guard_key_var, width=24, show="*",
-                 font=("Microsoft YaHei", 10)).grid(row=10, column=1, sticky='w', pady=4)
+                 font=("Microsoft YaHei", 10)).grid(row=11, column=1, sticky='w', pady=4)
 
         # 安全审核 LLM（可插拔判定引擎）
         tk.Label(frame, text="🤖 安全审核 LLM（判定引擎）", bg='white', font=("Microsoft YaHei", 10, "bold"),
-                 fg='#1976D2').grid(row=11, column=0, columnspan=2, sticky='w', pady=(10, 2))
-        tk.Label(frame, text="模式:", bg='white', font=("Microsoft YaHei", 10)).grid(row=12, column=0, sticky='w', pady=4)
+                 fg='#1976D2').grid(row=12, column=0, columnspan=2, sticky='w', pady=(10, 2))
+        tk.Label(frame, text="模式:", bg='white', font=("Microsoft YaHei", 10)).grid(row=13, column=0, sticky='w', pady=4)
         self.llm_mode_combo = ttk.Combobox(frame, textvariable=self.llm_mode_var,
                                            values=["local", "cloud", "hybrid"],
                                            width=8, state='readonly')
-        self.llm_mode_combo.grid(row=12, column=1, sticky='w', pady=4)
+        self.llm_mode_combo.grid(row=13, column=1, sticky='w', pady=4)
         self.llm_mode_combo.bind("<<ComboboxSelected>>", lambda e: self._update_mode_tip())
         # 模式优缺点动态说明（选择即显示）
         self.mode_tip_label = tk.Label(frame, text="", bg='#FFF8E1', fg='#5D4037', justify='left',
                                        font=("Microsoft YaHei", 9), padx=8, pady=6, wraplength=520)
-        self.mode_tip_label.grid(row=13, column=0, columnspan=2, sticky='we', pady=(0, 6))
+        self.mode_tip_label.grid(row=14, column=0, columnspan=2, sticky='we', pady=(0, 6))
         self._update_mode_tip()
-        tk.Label(frame, text="本地接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=14, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.llm_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=14, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="本地模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=15, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.llm_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=15, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=16, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.cloud_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=16, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=17, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.cloud_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=17, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="云端 Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=18, column=0, sticky='w', pady=4)
+        tk.Label(frame, text="本地接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=15, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.llm_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=15, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="本地模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=16, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.llm_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=16, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端接口:", bg='white', font=("Microsoft YaHei", 10)).grid(row=17, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.cloud_url_var, width=30, font=("Microsoft YaHei", 10)).grid(row=17, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端模型:", bg='white', font=("Microsoft YaHei", 10)).grid(row=18, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.cloud_model_var, width=24, font=("Microsoft YaHei", 10)).grid(row=18, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="云端 Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=19, column=0, sticky='w', pady=4)
         tk.Entry(frame, textvariable=self.cloud_key_var, width=24, show="*",
-                 font=("Microsoft YaHei", 10)).grid(row=18, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="失败策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=19, column=0, sticky='w', pady=4)
+                 font=("Microsoft YaHei", 10)).grid(row=19, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="失败策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=20, column=0, sticky='w', pady=4)
         ttk.Combobox(frame, textvariable=self.fail_policy_var, values=["fallback", "allow", "block"],
-                     width=10, state='readonly').grid(row=19, column=1, sticky='w', pady=4)
+                     width=10, state='readonly').grid(row=20, column=1, sticky='w', pady=4)
 
         # 差分隐私 / 行为分析 / 话术判断
-        tk.Label(frame, text="差分隐私ε:", bg='white', font=("Microsoft YaHei", 10)).grid(row=20, column=0, sticky='w', pady=4)
-        tk.Entry(frame, textvariable=self.dp_eps_var, width=10, font=("Microsoft YaHei", 10)).grid(row=20, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="机器行为分析:", bg='white', font=("Microsoft YaHei", 10)).grid(row=21, column=0, sticky='w', pady=4)
+        tk.Label(frame, text="差分隐私ε:", bg='white', font=("Microsoft YaHei", 10)).grid(row=21, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.dp_eps_var, width=10, font=("Microsoft YaHei", 10)).grid(row=21, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="机器行为分析:", bg='white', font=("Microsoft YaHei", 10)).grid(row=22, column=0, sticky='w', pady=4)
         tk.Checkbutton(frame, variable=self.behavior_var, bg='white',
-                       font=("Microsoft YaHei", 10)).grid(row=21, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="LLM话术判断:", bg='white', font=("Microsoft YaHei", 10)).grid(row=22, column=0, sticky='w', pady=4)
-        tk.Checkbutton(frame, variable=self.style_judge_var, bg='white',
                        font=("Microsoft YaHei", 10)).grid(row=22, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="LLM话术判断:", bg='white', font=("Microsoft YaHei", 10)).grid(row=23, column=0, sticky='w', pady=4)
+        tk.Checkbutton(frame, variable=self.style_judge_var, bg='white',
+                       font=("Microsoft YaHei", 10)).grid(row=23, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="", bg='white').grid(row=23, column=0, pady=4)
-        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=24, column=0, columnspan=2, sticky='w', pady=6)
+        tk.Label(frame, text="", bg='white').grid(row=24, column=0, pady=4)
+        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=25, column=0, columnspan=2, sticky='w', pady=6)
         self._btn(frame, "🔄 从服务端刷新", lambda: self._sync_config_from_server(silent=False),
-                  bg='#2196F3', width=16).grid(row=24, column=1, sticky='w', pady=6)
+                  bg='#2196F3', width=16).grid(row=25, column=1, sticky='w', pady=6)
 
         tip = ("说明：\n"
                "· 差分隐私：开启后对输出统计数字加入 Laplace 噪声（仅建议聚合统计输出启用）\n"
@@ -1094,7 +1098,34 @@ class GuardConfigGUI:
                "    失败策略：fallback=降级到另一引擎 / allow=放行 / block=拦截（fail-closed）\n"
                "· 配置修改后服务端自动热加载，无需重启")
         tk.Label(frame, text=tip, bg='#f0f7ff', fg='#555', justify='left',
-                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=25, column=0, columnspan=2, sticky='we', pady=10)
+                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=26, column=0, columnspan=2, sticky='we', pady=10)
+
+    def _quick_cloud_setup(self):
+        """弹窗：快速配置云端判定模型（模式 + 云端 Key）。"""
+        win = tk.Toplevel(self.root)
+        win.title("🔑 快速配置云端审核模型")
+        win.geometry("460x240")
+        win.configure(bg='white')
+        f = tk.Frame(win, bg='white'); f.pack(fill='both', expand=True, padx=20, pady=15)
+        tk.Label(f, text="选择模式:", bg='white', font=("Microsoft YaHei", 10)).grid(row=0, column=0, sticky='w', pady=6)
+        mode_var = tk.StringVar(value=self.llm_mode_var.get())
+        ttk.Combobox(f, textvariable=mode_var, values=["local", "cloud", "hybrid"],
+                     width=10, state='readonly').grid(row=0, column=1, sticky='w', pady=6)
+        tk.Label(f, text="云端 API Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=1, column=0, sticky='w', pady=6)
+        key_entry = tk.Entry(f, textvariable=self.cloud_key_var, width=32, show="*", font=("Microsoft YaHei", 10))
+        key_entry.grid(row=1, column=1, sticky='w', pady=6)
+        tk.Label(f, text="云端接口/模型已预填（DeepSeek），保存即生效、无需重启。", bg='white',
+                 fg='#888', font=("Microsoft YaHei", 8), justify='left').grid(row=2, column=0, columnspan=2, sticky='w', pady=4)
+        def do_save():
+            if not mode_var.get().strip():
+                messagebox.showwarning("提示", "请选择模式"); return
+            if mode_var.get() != "local" and not self.cloud_key_var.get().strip():
+                if not messagebox.askyesno("确认", "云端模式未填 Key 将无法调用云端，仍要保存吗？"):
+                    return
+            self.llm_mode_var.set(mode_var.get())
+            self._save_config()
+            win.destroy()
+        self._btn(f, "💾 保存", do_save, bg='#4CAF50', width=12).grid(row=3, column=0, columnspan=2, sticky='w', pady=10)
 
     def _update_mode_tip(self):
         """按当前选择的判定引擎模式，动态显示优缺点与适用场景。"""
