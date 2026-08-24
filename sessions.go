@@ -132,6 +132,7 @@ func startCacheJanitor() {
 				}
 			}
 			sessionCtxMu.Unlock()
+			cleanupBehavior() // 清理机器行为记录
 
 			// Redis 健康检查：运行中连接异常自动降级内存模式（功能不失效）
 			if !useMemoryMode.Load() {

@@ -33,8 +33,24 @@ func normalizeForMatch(content string) string {
 	return strings.ToLower(normed)
 }
 
-// tryDecodeVariants 尝试解码 URL 编码 / Base64 内容，返回可读文本（用于对抗编码混淆）
+// tryDecodeVariants 尝试解码 URL 编码 / Base64 内容（支持多层嵌套），返回可读文本
 func tryDecodeVariants(content string) string {
+	decoded := content
+	for i := 0; i < 3; i++ { // 最多解 3 层嵌套编码
+		next := decodeOnce(decoded)
+		if next == "" || next == decoded {
+			break
+		}
+		decoded = next
+	}
+	if decoded != content {
+		return decoded
+	}
+	return ""
+}
+
+// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64
+func decodeOnce(content string) string {
 	// URL 编码：仅当含 %（URL 编码标记）时尝试，避免把 Base64 的 + 误当空格
 	if strings.Contains(content, "%") {
 		if dec, err := url.QueryUnescape(content); err == nil && dec != content && isReadableText(dec) {

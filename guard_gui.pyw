@@ -211,6 +211,10 @@ class GuardConfigGUI:
         self.cloud_model_var = tk.StringVar(value="")
         self.cloud_key_var = tk.StringVar(value="")
         self.fail_policy_var = tk.StringVar(value="fallback")
+        # 差分隐私 / 行为分析 / 话术判断
+        self.dp_eps_var = tk.StringVar(value="1.0")
+        self.behavior_var = tk.BooleanVar(value=False)
+        self.style_judge_var = tk.BooleanVar(value=False)
 
         # 自动刷新 / 自动滚动开关
         self.session_auto = tk.BooleanVar(value=True)
@@ -359,6 +363,9 @@ class GuardConfigGUI:
             'cloud_judge_model': self.cloud_model_var.get().strip(),
             'cloud_judge_api_key': self.cloud_key_var.get().strip(),
             'llm_judge_fail_policy': self.fail_policy_var.get().strip() or "fallback",
+            'dp_epsilon': float(self.dp_eps_var.get() or 1.0),
+            'enable_behavior_analysis': self.behavior_var.get(),
+            'enable_llm_style_judge': self.style_judge_var.get(),
         }
         try:
             resp = requests.put(f"{API_BASE}/config", json=config, headers=admin_headers(True), timeout=3)
@@ -425,6 +432,12 @@ class GuardConfigGUI:
             self.cloud_key_var.set(cfg.get('cloud_judge_api_key') or '')
         if cfg.get('llm_judge_fail_policy'):
             self.fail_policy_var.set(cfg['llm_judge_fail_policy'])
+        if 'dp_epsilon' in cfg:
+            self.dp_eps_var.set(str(cfg.get('dp_epsilon') or 1.0))
+        if 'enable_behavior_analysis' in cfg:
+            self.behavior_var.set(bool(cfg['enable_behavior_analysis']))
+        if 'enable_llm_style_judge' in cfg:
+            self.style_judge_var.set(bool(cfg['enable_llm_style_judge']))
         if not silent:
             self._append_log("✅ 已同步服务端配置")
 
@@ -497,8 +510,39 @@ class GuardConfigGUI:
         self._btn(action_frame, "✅ 启用", lambda: self._toggle_rule(True), bg='#4CAF50').pack(side='left', padx=5)
         self._btn(action_frame, "❌ 禁用", lambda: self._toggle_rule(False), bg='#FF9800').pack(side='left', padx=5)
         self._btn(action_frame, "🗑 删除选中", self._delete_rule, bg='#f44336').pack(side='left', padx=5)
-        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核",
+        self._btn(action_frame, "🛡 对抗自测", self._run_self_test, bg='#9C27B0').pack(side='left', padx=5)
+        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核；自测=回归验证规则层",
                  bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='right', padx=10)
+
+    def _run_self_test(self):
+        """运行对抗自测，弹窗显示穿透报告。"""
+        win = tk.Toplevel(self.root)
+        win.title("🛡 对抗自测报告")
+        win.geometry("680x420")
+        win.configure(bg='white')
+        text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
+        text.pack(fill='both', expand=True, padx=8, pady=8)
+        text.insert(tk.END, "正在运行对抗自测（规则层回归）...\n")
+
+        def task():
+            try:
+                resp = requests.post(f"{API_BASE}/security/self-test", headers=admin_headers(), timeout=30)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    lines = [f"🛡 对抗自测完成：{d.get('total')} 个样本，规则层拦截 {d.get('blocked_by_rules')}，"
+                             f"穿透 {d.get('penetrated_count')}\n"]
+                    for p in d.get('penetrated', []):
+                        lines.append(f"  ❌ [{p.get('category','')}] {p.get('content','')}\n")
+                    if not d.get('penetrated'):
+                        lines.append("  ✅ 全部样本均被规则层识别，无穿透\n")
+                    lines.append(f"\n{d.get('note','')}\n")
+                    content = "".join(lines)
+                    win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, content)))
+                else:
+                    win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, f"自测失败: HTTP {resp.status_code}\n")))
+            except Exception as e:
+                win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, f"自测异常: {e}\n")))
+        threading.Thread(target=task, daemon=True).start()
 
     def _load_rules_async(self):
         def task():
@@ -1018,26 +1062,39 @@ class GuardConfigGUI:
         ttk.Combobox(frame, textvariable=self.fail_policy_var, values=["fallback", "allow", "block"],
                      width=10, state='readonly').grid(row=19, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="", bg='white').grid(row=20, column=0, pady=4)
-        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=21, column=0, columnspan=2, sticky='w', pady=6)
+        # 差分隐私 / 行为分析 / 话术判断
+        tk.Label(frame, text="差分隐私ε:", bg='white', font=("Microsoft YaHei", 10)).grid(row=20, column=0, sticky='w', pady=4)
+        tk.Entry(frame, textvariable=self.dp_eps_var, width=10, font=("Microsoft YaHei", 10)).grid(row=20, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="机器行为分析:", bg='white', font=("Microsoft YaHei", 10)).grid(row=21, column=0, sticky='w', pady=4)
+        tk.Checkbutton(frame, variable=self.behavior_var, bg='white',
+                       font=("Microsoft YaHei", 10)).grid(row=21, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="LLM话术判断:", bg='white', font=("Microsoft YaHei", 10)).grid(row=22, column=0, sticky='w', pady=4)
+        tk.Checkbutton(frame, variable=self.style_judge_var, bg='white',
+                       font=("Microsoft YaHei", 10)).grid(row=22, column=1, sticky='w', pady=4)
+
+        tk.Label(frame, text="", bg='white').grid(row=23, column=0, pady=4)
+        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=24, column=0, columnspan=2, sticky='w', pady=6)
         self._btn(frame, "🔄 从服务端刷新", lambda: self._sync_config_from_server(silent=False),
-                  bg='#2196F3', width=16).grid(row=21, column=1, sticky='w', pady=6)
+                  bg='#2196F3', width=16).grid(row=24, column=1, sticky='w', pady=6)
 
         tip = ("说明：\n"
-               "· 差分隐私：开启后对输出统计类数据加入噪声（预留扩展）\n"
+               "· 差分隐私：开启后对输出统计数字加入 Laplace 噪声（仅建议聚合统计输出启用）\n"
+               "    ε 越大噪声越小（精度高）；ε 越小隐私保护越强\n"
                "· 限流速率：每个会话每秒最多请求数\n"
                "· 脱敏级别：partial 部分脱敏 / full 完整（管理员） / minimal 最小化\n"
                "· 会话超时：风险积分缓存保留时长（分钟）\n"
                "· 内容去重：相同/高度相似评论在窗口内重复出现直接拦截（专杀刷屏）\n"
                "· 账号/IP 限流：按 user_id 与来源 IP 聚合限流，堵住分布式刷评\n"
                "· 账号信誉分：违规跨会话累计，低信誉账号直接降权\n"
+               "· 机器行为分析：请求间隔过于均匀 → 判定为自动化并拦截（真人点击随机）\n"
+               "· LLM话术判断：审核模型额外判断机械化刷屏话术（对明显重复才判，默认关）\n"
                "· 业务调用密钥：业务系统调 /v1/guard 时需携带 X-Guard-Key（留空则不鉴权）\n"
                "· 安全审核 LLM（可插拔）：local=本地模型 / cloud=云端 / hybrid=本地初筛+云端终审\n"
                "    本地用 Ollama（OpenAI 兼容端点）；云端填接口+模型+Key（如 deepseek-chat）\n"
                "    失败策略：fallback=降级到另一引擎 / allow=放行 / block=拦截（fail-closed）\n"
                "· 配置修改后服务端自动热加载，无需重启")
         tk.Label(frame, text=tip, bg='#f0f7ff', fg='#555', justify='left',
-                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=22, column=0, columnspan=2, sticky='we', pady=10)
+                 font=("Microsoft YaHei", 9), padx=10, pady=8).grid(row=25, column=0, columnspan=2, sticky='we', pady=10)
 
     def _update_mode_tip(self):
         """按当前选择的判定引擎模式，动态显示优缺点与适用场景。"""
