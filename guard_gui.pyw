@@ -683,17 +683,24 @@ class GuardConfigGUI:
         """运行对抗自测，弹窗显示穿透报告。"""
         win = tk.Toplevel(self.root)
         win.title("🛡 对抗自测报告")
-        win.geometry("680x420")
+        win.geometry("680x440")
         win.configure(bg='white')
         text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
-        text.pack(fill='both', expand=True, padx=8, pady=8)
+        text.pack(fill='both', expand=True, padx=8, pady=(8, 4))
         text.insert(tk.END, "正在运行对抗自测（规则层回归）...\n")
+
+        btn_row = tk.Frame(win, bg='white')
+        btn_row.pack(fill='x', padx=8, pady=(0, 8))
+        self._btn(btn_row, "🛡 采纳穿透样本为规则", self._adopt_bypass_samples, bg='#9C27B0', width=22).pack(side='left')
+        tk.Label(btn_row, text="穿透样本可一键转为审核触发词或关键词拦截，堵住绕过", bg='white', fg='#888',
+                 font=("Microsoft YaHei", 8)).pack(side='left', padx=8)
 
         def task():
             try:
                 resp = requests.post(f"{API_BASE}/security/self-test", headers=admin_headers(), timeout=30)
                 if resp.status_code == 200:
                     d = resp.json()
+                    self._last_penetrated = d.get('penetrated', [])
                     lines = [f"🛡 对抗自测完成：{d.get('total')} 个样本，规则层拦截 {d.get('blocked_by_rules')}，"
                              f"穿透 {d.get('penetrated_count')}\n"]
                     for p in d.get('penetrated', []):
@@ -704,10 +711,93 @@ class GuardConfigGUI:
                     content = "".join(lines)
                     win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, content)))
                 else:
+                    self._last_penetrated = []
                     win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, f"自测失败: HTTP {resp.status_code}\n")))
             except Exception as e:
+                self._last_penetrated = []
                 win.after(0, lambda: (text.delete(1.0, tk.END), text.insert(tk.END, f"自测异常: {e}\n")))
         threading.Thread(target=task, daemon=True).start()
+
+    def _adopt_bypass_samples(self):
+        """采纳穿透样本为规则：弹选择窗口（多选样本 + 选择添加类型）。"""
+        samples = getattr(self, '_last_penetrated', [])
+        if not samples:
+            messagebox.showinfo("提示", "暂无穿透样本可采纳\n（先运行「🛡 对抗自测」）")
+            return
+
+        win = tk.Toplevel(self.root)
+        win.title("🛡 采纳穿透样本为规则")
+        win.geometry("700x480")
+        win.configure(bg='white')
+
+        # 类型选择
+        type_frame = tk.Frame(win, bg='white')
+        type_frame.pack(fill='x', padx=10, pady=(10, 4))
+        tk.Label(type_frame, text="添加为：", bg='white', font=("Microsoft YaHei", 10)).pack(side='left')
+        self.adopt_type_var = tk.StringVar(value="suspicious")
+        tk.Radiobutton(type_frame, text="审核触发词（命中→触发LLM深度审核，推荐）", variable=self.adopt_type_var,
+                       value="suspicious", bg='white', font=("Microsoft YaHei", 9)).pack(side='left', padx=6)
+        tk.Radiobutton(type_frame, text="关键词拦截（命中→直接拦截）", variable=self.adopt_type_var,
+                       value="keyword", bg='white', font=("Microsoft YaHei", 9)).pack(side='left', padx=6)
+
+        # 样本多选列表（可滚动）
+        list_frame = tk.Frame(win, bg='white')
+        list_frame.pack(fill='both', expand=True, padx=10, pady=4)
+        tk.Label(list_frame, text="选择要采纳的穿透样本（默认全选）：", bg='white',
+                 font=("Microsoft YaHei", 9)).pack(anchor='w')
+        canvas = tk.Canvas(list_frame, bg='white', highlightthickness=0)
+        vbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        inner = tk.Frame(canvas, bg='white')
+        canvas.create_window((0, 0), window=inner, anchor='nw')
+        canvas.configure(yscrollcommand=vbar.set)
+        canvas.pack(side='left', fill='both', expand=True)
+        vbar.pack(side='right', fill='y')
+        inner.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+
+        self._adopt_vars = []
+        for s in samples:
+            v = tk.BooleanVar(value=True)
+            self._adopt_vars.append(v)
+            tk.Checkbutton(inner, text=f"[{s.get('category', '')}] {s.get('content', '')}",
+                           variable=v, bg='white', anchor='w', font=("Consolas", 9),
+                           justify='left').pack(fill='x', padx=4, pady=1)
+
+        btn_frame = tk.Frame(win, bg='white')
+        btn_frame.pack(fill='x', padx=10, pady=8)
+        self._btn(btn_frame, "✅ 添加选中为规则", lambda: self._do_adopt(samples, win), bg='#4CAF50', width=18).pack(side='left')
+        self._btn(btn_frame, "取消", win.destroy, bg='#9E9E9E', width=10).pack(side='left', padx=8)
+
+    def _do_adopt(self, samples, win):
+        """按选择把穿透样本逐个添加为规则。"""
+        chosen = [s for s, v in zip(samples, self._adopt_vars) if v.get()]
+        if not chosen:
+            messagebox.showinfo("提示", "未选择任何样本")
+            return
+        typ = self.adopt_type_var.get()
+        ok = 0
+        fail = 0
+        for s in chosen:
+            content = s.get('content', '')
+            if not content:
+                continue
+            try:
+                if typ == 'suspicious':
+                    r = requests.post(f"{API_BASE}/suspicious-keywords", json={"keyword": content},
+                                      headers=admin_headers(True), timeout=3)
+                else:
+                    r = requests.post(f"{API_BASE}/rules", json={
+                        "type": "keyword", "pattern": content,
+                        "reason": f"对抗自测采纳: {s.get('category', '')}"
+                    }, headers=admin_headers(True), timeout=3)
+                if r.status_code == 200:
+                    ok += 1
+                else:
+                    fail += 1
+            except Exception:
+                fail += 1
+        self._append_log(f"🛡 采纳完成: 成功 {ok} 条, 失败 {fail} 条（类型: {'审核触发词' if typ == 'suspicious' else '关键词拦截'}）")
+        win.destroy()
+        self._load_rules_async()  # 刷新规则管理页
 
     def _load_rules_async(self):
         def task():
