@@ -449,11 +449,11 @@ def blocks_perf():
          Paragraph("<font name='SIMHEI' color='#FFFFFF'>P50</font>", S["small"]),
          Paragraph("<font name='SIMHEI' color='#FFFFFF'>平均</font>", S["small"]),
          Paragraph("<font name='SIMHEI' color='#FFFFFF'>说明</font>", S["small"])],
-        [Paragraph("普通输入放行", S["body_b"]), Paragraph("1.7 ms", S["body_b"]), Paragraph("7 ms", S["body_b"]),
-         Paragraph("纯规则快速路径，无大模型（实测 100 次）", S["small"])],
-        [Paragraph("工具调用放行 / 拦截", S["body_b"]), Paragraph("1.4 ms", S["body_b"]), Paragraph("5.4 ms", S["body_b"]),
+        [Paragraph("普通输入放行", S["body_b"]), Paragraph("0.9 ms", S["body_b"]), Paragraph("0.9 ms", S["body_b"]),
+         Paragraph("纯规则快速路径，无大模型（keep-alive 长连接实测 100 次）", S["small"])],
+        [Paragraph("工具调用放行 / 拦截", S["body_b"]), Paragraph("1.0 ms", S["body_b"]), Paragraph("1.1 ms", S["body_b"]),
          Paragraph("白名单 + 参数校验 + JWT 令牌", S["small"])],
-        [Paragraph("输出脱敏 + 水印", S["body_b"]), Paragraph("1.6 ms", S["body_b"]), Paragraph("4.8 ms", S["body_b"]),
+        [Paragraph("输出脱敏 + 水印", S["body_b"]), Paragraph("1.2 ms", S["body_b"]), Paragraph("1.3 ms", S["body_b"]),
          Paragraph("10 类信息脱敏 + 零宽水印 + 差分隐私", S["small"])],
         [Paragraph("大模型判定（可选）", S["body_b"]), Paragraph("~0.9 s", S["body_b"]), Paragraph("~0.9 s", S["body_b"]),
          Paragraph("仅可疑内容 / 强制审查时触发；30 秒判断缓存命中零开销", S["small"])],
@@ -468,9 +468,9 @@ def blocks_perf():
     ]))
     return [perf_t, Spacer(1, 4 * mm),
             card("性能结论", [
-                "网关自身开销（规则检测 / 脱敏 / 令牌等纯本地逻辑）P50 约 1.5~2 ms，对业务几乎无感",
+                "网关自身开销（规则检测 / 脱敏 / 令牌等纯本地逻辑）P50 约 1 ms，平均 = 中位，损耗可忽略",
+                "长连接接入下平均与 P50 一致（0.9~1.3 ms）；若每次新建连接会叠加约 20ms TCP 握手，属客户端开销",
                 "大模型判定引擎是唯一显著开销（约 0.9 s），仅在可疑内容时触发，可开关、可换引擎",
-                "并发能力：20 并发实测吞吐约 1470 请求/秒（单实例、本地部署）",
                 "[每请求耗时已全程量化：响应含 latency_ms / llm_ms 字段，审计日志逐条记录，CSV 报表可导出]",
             ])]
 

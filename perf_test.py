@@ -1,8 +1,11 @@
 # -*- coding: utf-8 -*-
-"""性能基准测试：量化安全网关的延迟损耗（Latency）"""
-import json, io, sys, time, statistics, urllib.request, urllib.error
+"""性能基准测试：量化安全网关的延迟损耗（Latency）
+说明：使用 keep-alive 长连接（线程本地连接池），反映业务侧真实接入效果
+（每次新建连接会产生 ~20ms TCP 握手开销，与网关本身无关）"""
+import json, io, sys, time, statistics, threading, http.client
 
-BASE = "http://127.0.0.1:8080"
+BASE_HOST = "127.0.0.1"
+BASE_PORT = 8080
 CFG = "system_config.json"
 
 def load_cfg():
@@ -12,33 +15,44 @@ def save_cfg(cfg):
     with io.open(CFG, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
 
-def call(path, body=None, raw=False):
+_local = threading.local()
+
+def get_conn():
+    c = getattr(_local, "conn", None)
+    if c is None:
+        c = http.client.HTTPConnection(BASE_HOST, BASE_PORT, timeout=30)
+        _local.conn = c
+    return c
+
+def call(path, body=None):
     data = json.dumps(body, ensure_ascii=False).encode("utf-8") if body else None
     headers = {"Content-Type": "application/json"}
     key = load_cfg().get("guard_api_key", "")
     if key:
         headers["X-Guard-Key"] = key
-    req = urllib.request.Request(BASE + path, data=data, headers=headers,
-                                 method="POST" if body else "GET")
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            content = r.read(); code = r.status
-    except urllib.error.HTTPError as e:
-        content = e.read(); code = e.code
-    return code, content
+    for attempt in range(2):  # 连接被回收时重连一次
+        try:
+            t0 = time.perf_counter()
+            conn = get_conn()
+            conn.request("POST" if body else "GET", path, data, headers)
+            resp = conn.getresponse()
+            content = resp.read()
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            return resp.status, content, elapsed_ms
+        except (http.client.RemoteDisconnected, ConnectionResetError, BrokenPipeError):
+            _local.conn = None  # 重建连接
+            if attempt == 1:
+                return -1, b"", 0
 
 def guard(session, action, content="", extra=None):
     b = {"session_id": session, "user_id": "perf", "action_type": action, "content": content}
     if extra:
         b.update(extra)
-    t0 = time.perf_counter()
-    code, raw = call("/v1/guard", b)
-    elapsed_ms = (time.perf_counter() - t0) * 1000
+    code, raw, elapsed_ms = call("/v1/guard", b)
     if code != 200:
         return None
     r = json.loads(raw.decode("utf-8"))
-    # 服务端字段可能为 0（<1ms 被省略），客户端实测为准
-    r["latency_ms"] = elapsed_ms
+    r["latency_ms"] = elapsed_ms  # 客户端实测为准（服务端 <1ms 时字段为 0 被省略）
     return r
 
 def pct(series, p):
@@ -64,7 +78,7 @@ def run_scenario(n, fn):
 
 def main():
     print("===== 性能基准测试：安全网关延迟量化 =====")
-    print("服务:", BASE, " 当前时间:", time.strftime("%H:%M:%S"))
+    print("服务: http://%s:%d 当前时间: %s" % (BASE_HOST, BASE_PORT, time.strftime("%H:%M:%S")))
     orig = load_cfg()
     # 临时宽松配置：关闭去重/行为检测、放大限流，避免测试互相干扰
     cfg = dict(orig)
