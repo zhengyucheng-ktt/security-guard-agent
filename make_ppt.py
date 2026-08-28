@@ -477,28 +477,7 @@ card(s, 1.0, 5.35, 11.3, 1.7, "结论", [
     "~若每次新建 TCP 连接会叠加约 20ms 握手开销，业务侧用连接池即可消除",
 ])
 
-# ===== 15 安全自测（本地 vs 混合对比） =====
-s = prs.slides.add_slide(BLANK)
-title_bar(s, "07 · 质量与验收 · 安全自测", "本地 7B vs 本地+DeepSeek 混合，三套测试集对比")
-# 左块：本地 7B
-add_rect(s, 1.0, 1.65, 5.55, 2.55, NAVY, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
-add_text(s, 1.0, 1.72, 5.55, 0.6, "本地 7B（仅本地模型）", 17, GOLD, True, PP_ALIGN.CENTER)
-add_text(s, 1.0, 2.2, 5.55, 1.0, "90%", 44, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 1.0, 3.25, 5.55, 0.6, "基础攻击 55/61 · 变体 91/98（93%）", 12.5, GOLD2, False, PP_ALIGN.CENTER)
-add_text(s, 1.0, 3.65, 5.55, 0.5, "语义专项 15/20（75%）· 越狱 14/15", 11, GOLD2, False, PP_ALIGN.CENTER)
-# 右块：混合
-add_rect(s, 6.78, 1.65, 5.55, 2.55, GREEN, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
-add_text(s, 6.78, 1.72, 5.55, 0.6, "混合（本地 + DeepSeek）", 17, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 6.78, 2.2, 5.55, 1.0, "93%", 44, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 6.78, 3.25, 5.55, 0.6, "基础攻击 57/61 · 变体 98/98（100%）", 12.5, WHITE, False, PP_ALIGN.CENTER)
-add_text(s, 6.78, 3.65, 5.55, 0.5, "语义专项 16/20（80%）· 越狱 15/15", 11, WHITE, False, PP_ALIGN.CENTER)
-card(s, 1.0, 4.45, 11.3, 2.4, "三套测试集对比（对抗测试报告）", [
-    "基础攻击（61）本地 90% → 混合 93%　·　自动变体（98，同义词/编码/角色/谐音）本地 93% → 混合 100%",
-    "语义级专项（20，角色扮演/隐喻/社工）：本地 75% → 混合 80%——剩余为纯隐喻与模糊社工（'锁着的门后面是什么'），属 AI 安全领域公认边界，需业务侧人工复核",
-    "~结论：自动改写让用户报手机号/身份证自动脱敏放行（132****5678），误判归零且对话不中断；混合模式用于强对抗场景",
-])
-
-# ===== 16 质量门禁与验收标准 =====
+# ===== 15 验收标准（先结论：达标承诺） =====
 s = prs.slides.add_slide(BLANK)
 title_bar(s, "07 · 质量与验收 · 验收标准", "Quality Gates · 交付验证 + PRD 硬性指标 + 开箱即测")
 # 左：交付验证
@@ -531,6 +510,27 @@ add_rect(s, 1.0, 4.75, 11.3, 1.95, LIGHT, BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
 add_text(s, 1.2, 4.85, 11.0, 0.45, "开箱即测 · 拿到手就能验收的两个黑盒用例", 15, NAVY2, True)
 add_text(s, 1.2, 5.4, 5.3, 1.2, "用例一：发送『我的号码13212345678请登记』\n→ 放行 ✅，返回改写结果 132****5678\n（自动脱敏，对话不中断）", 12.5, DARK, spacing=1.3)
 add_text(s, 6.9, 5.4, 5.3, 1.2, "用例二：同一内容 10 分钟内重复提交\n→ 拦截 ✅（防刷屏）\n（管理后台可实时查看审计与拦截原因）", 12.5, DARK, spacing=1.3)
+
+# ===== 16 安全自测（后证据：测试报告） =====
+s = prs.slides.add_slide(BLANK)
+title_bar(s, "07 · 质量与验收 · 安全自测", "本地 7B vs 本地+DeepSeek 混合，三套测试集对比")
+# 左块：本地 7B
+add_rect(s, 1.0, 1.65, 5.55, 2.55, NAVY, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+add_text(s, 1.0, 1.72, 5.55, 0.6, "本地 7B（仅本地模型）", 17, GOLD, True, PP_ALIGN.CENTER)
+add_text(s, 1.0, 2.2, 5.55, 1.0, "90%", 44, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 1.0, 3.25, 5.55, 0.6, "基础攻击 55/61 · 变体 91/98（93%）", 12.5, GOLD2, False, PP_ALIGN.CENTER)
+add_text(s, 1.0, 3.65, 5.55, 0.5, "语义专项 15/20（75%）· 越狱 14/15", 11, GOLD2, False, PP_ALIGN.CENTER)
+# 右块：混合
+add_rect(s, 6.78, 1.65, 5.55, 2.55, GREEN, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+add_text(s, 6.78, 1.72, 5.55, 0.6, "混合（本地 + DeepSeek）", 17, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 6.78, 2.2, 5.55, 1.0, "93%", 44, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 6.78, 3.25, 5.55, 0.6, "基础攻击 57/61 · 变体 98/98（100%）", 12.5, WHITE, False, PP_ALIGN.CENTER)
+add_text(s, 6.78, 3.65, 5.55, 0.5, "语义专项 16/20（80%）· 越狱 15/15", 11, WHITE, False, PP_ALIGN.CENTER)
+card(s, 1.0, 4.45, 11.3, 2.4, "三套测试集对比（对抗测试报告）", [
+    "基础攻击（61）本地 90% → 混合 93%　·　自动变体（98，同义词/编码/角色/谐音）本地 93% → 混合 100%",
+    "语义级专项（20，角色扮演/隐喻/社工）：本地 75% → 混合 80%——剩余为纯隐喻与模糊社工（'锁着的门后面是什么'），属 AI 安全领域公认边界，需业务侧人工复核",
+    "~结论：自动改写让用户报手机号/身份证自动脱敏放行（132****5678），误判归零且对话不中断；混合模式用于强对抗场景",
+])
 
 # ===== 17 部署交付 =====
 s = prs.slides.add_slide(BLANK)
