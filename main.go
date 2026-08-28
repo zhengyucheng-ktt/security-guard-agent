@@ -79,6 +79,7 @@ type SystemConfig struct {
 	DPEpsilon            float64 `json:"dp_epsilon"`             // 差分隐私噪声参数（越大噪声越小；0=不处理）
 	EnableBehaviorAnalysis bool   `json:"enable_behavior_analysis"` // 机器行为特征评分（请求间隔均匀性）
 	EnableLLMStyleJudge  bool    `json:"enable_llm_style_judge"`  // 审核 LLM 增加机器人话术判断维度
+	EnableAutoRewrite    bool    `json:"enable_auto_rewrite"`     // 低风险内容自动改写（敏感词替换为***后继续对话）
 }
 
 
@@ -97,6 +98,7 @@ type logEntry struct {
 	RiskLevel  string
 	Reason     string
 	Score      int
+	AttackType string
 }
 
 
@@ -157,14 +159,39 @@ func loadOrGenerateAdminToken() string {
 	return token
 }
 
+// 只读 Token：仅可查看（GET），不可修改安全策略（账号权限分级）
+const viewTokenFile = "view_token.txt"
+
+var viewToken = loadOrGenerateViewToken()
+
+func loadOrGenerateViewToken() string {
+	if env := os.Getenv("VIEW_TOKEN"); env != "" {
+		return env
+	}
+	if data, err := os.ReadFile(viewTokenFile); err == nil {
+		if token := strings.TrimSpace(string(data)); token != "" {
+			return token
+		}
+	}
+	token := hex.EncodeToString(randBytes(16))
+	os.WriteFile(viewTokenFile, []byte(token+"\n"), 0600)
+	log.Printf("👁️ 已生成只读 Token 并保存到 %s（仅可查看，不可修改）", viewTokenFile)
+	return token
+}
+
 func adminAuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("X-Admin-Token")
-		if token == "" || token != adminToken {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: 缺少或错误的管理员 Token（见 admin_token.txt 或服务日志）"})
+		if token != "" && token == adminToken {
+			c.Next() // 管理员：全权限
 			return
 		}
-		c.Next()
+		// 只读 Token：仅允许 GET（查看审计/会话/规则，不可修改）
+		if token != "" && token == viewToken && c.Request.Method == http.MethodGet {
+			c.Next()
+			return
+		}
+		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized: Token 无效或无权限（只读 Token 仅可查看，修改需管理员 Token）"})
 	}
 }
 
@@ -218,7 +245,8 @@ type GuardResponse struct {
 	SafeOutput    string `json:"safe_output,omitempty"`
 	CurrentScore  int    `json:"current_score,omitempty"`
 	SessionStatus string `json:"session_status,omitempty"`
-	ToolToken     string `json:"tool_token,omitempty"` // 工具调用授权令牌（tool_call 放行时返回）
+	ToolToken     string `json:"tool_token,omitempty"`     // 工具调用授权令牌（tool_call 放行时返回）
+	RewrittenInput string `json:"rewritten_input,omitempty"` // 低风险自动改写后的输入（业务可用其继续对话）
 }
 
 type Rule struct {
@@ -990,6 +1018,18 @@ func guardHandler(c *gin.Context) {
 	decision = "allow"
 	riskLevel = "low"
 
+	// 低风险自动改写（可选，仅用户输入）：PII（手机号/邮箱/身份证/银行卡/IP）先脱敏再进入
+	// 后续规则与模型判断——命中敏感信息但无恶意意图的内容可继续对话，改写结果通过
+	// rewritten_input 返回给业务侧使用。原始内容保留在 originalContent 用于审计溯源。
+	originalContent := req.Content
+	if req.ActionType == "user_input" && req.Content != "" && cfg.EnableAutoRewrite {
+		if rewritten := rewriteContent(req.Content); rewritten != req.Content {
+			resp.RewrittenInput = rewritten
+			req.Content = rewritten
+			log.Printf("✏️ 低风险内容已自动改写: session=%s", req.SessionID)
+		}
+	}
+
 	// 会话语境分（多轮渐进式注入防御）：
 	// 铺垫词累积语境分（不拦截）→ 达标后升级审查，命中敏感词联动拦截
 	if req.ActionType == "user_input" && req.SessionID != "" && req.Content != "" {
@@ -1122,7 +1162,7 @@ func guardHandler(c *gin.Context) {
 		}
 		if risk, reason := checkInjection(req.OutputContent); risk {
 			log.Printf("🛑 间接注入拦截: %s", reason)
-			writeAuditLog(req.SessionID, req.UserID, "tool_result", req.OutputContent, "block", "high", reason, 0)
+			writeAuditLog(req.SessionID, req.UserID, "tool_result", req.OutputContent, "block", "high", reason, classifyAttack(reason), 0)
 			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "工具返回内容存在注入风险: " + reason})
 			return
 		}
@@ -1131,6 +1171,31 @@ func guardHandler(c *gin.Context) {
 			safe = addWatermark(safe, req.SessionID, req.UserID)
 		}
 		c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: safe})
+		return
+	case "thinking":
+		// 思维链监控：业务智能体可把思考过程文本传入（action_type=thinking），
+		// 检测 AI 自主产生的危险思路（无需用户触发）
+		if req.OutputContent == "" {
+			c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low"})
+			return
+		}
+		thinking := req.OutputContent
+		if risk, reason := checkInjection(thinking); risk {
+			log.Printf("🛑 思考过程注入拦截: %s", reason)
+			writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", reason, classifyAttack(reason), 0)
+			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在注入风险: " + reason})
+			return
+		}
+		if isSuspicious(thinking) {
+			hasRisk, _, reason := judgeByOllama(thinking)
+			if hasRisk {
+				log.Printf("🤖 思考过程风险拦截: %s", reason)
+				writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", "大模型判断: "+reason, classifyAttack(reason), 0)
+				c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在风险: " + reason})
+				return
+			}
+		}
+		c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low"})
 		return
 	case "output":
 		if req.OutputContent == "" {
@@ -1191,12 +1256,13 @@ func guardHandler(c *gin.Context) {
 		resp.Decision = "block"
 		resp.RiskLevel = riskLevel
 		resp.BlockReason = blockReason
+		resp.RewrittenInput = "" // 已拦截的内容不返回改写结果，避免业务侧误用
 	} else {
 		resp.Decision = "allow"
 		resp.RiskLevel = riskLevel
 	}
 
-	writeAuditLog(req.SessionID, req.UserID, req.ActionType, req.Content, resp.Decision, resp.RiskLevel, resp.BlockReason, resp.CurrentScore)
+	writeAuditLog(req.SessionID, req.UserID, req.ActionType, originalContent, resp.Decision, resp.RiskLevel, resp.BlockReason, classifyAttack(resp.BlockReason), resp.CurrentScore)
 	c.JSON(http.StatusOK, resp)
 }
 
@@ -1711,7 +1777,18 @@ func judgeWithProvider(p judgeProvider, content string) (bool, string, string, e
 }
 
 // judgeByOllama 按配置模式调度判定引擎（local / cloud / hybrid）+ 失败策略
+// judgeByOllama 判定入口（带 30s 结果缓存，降低延迟与成本）
 func judgeByOllama(content string) (bool, string, string) {
+	if has, act, reason, ok := getJudgeCache(content); ok {
+		log.Printf("⚡ 判定缓存命中: hasRisk=%v", has)
+		return has, act, reason
+	}
+	has, action, reason := judgeByOllamaInner(content)
+	setJudgeCache(content, has, action, reason)
+	return has, action, reason
+}
+
+func judgeByOllamaInner(content string) (bool, string, string) {
 	configMutex.RLock()
 	cfg := systemConfig
 	configMutex.RUnlock()
@@ -1925,6 +2002,8 @@ func setupRouter() *gin.Engine {
 	admin.POST("/whitelist", adminAddWhitelist)
 	admin.DELETE("/whitelist/:index", adminDeleteWhitelist)
 	admin.GET("/logs", adminGetLogs)
+	admin.GET("/logs/verify", adminVerifyLogs)
+	admin.GET("/logs/export", adminExportLogs)
 	admin.GET("/sessions", adminGetSessions)
 	admin.PUT("/sessions/:id/reset", adminResetSession)
 	admin.PUT("/sessions/:id/ban", adminBanSession)

@@ -5,6 +5,7 @@ audit.log
 # 运行时生成的密钥与 Token（不提交）
 .jwt_secret
 admin_token.txt
+view_token.txt
 
 # 会话积分持久化缓存（不提交）
 sessions_cache.json

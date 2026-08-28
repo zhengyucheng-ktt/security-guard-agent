@@ -1,3 +1,7 @@
 /api/weather/query
 /api/stock/info
 /api/news/list
+/api/custom-params
+/api/custom-it
+/api/custom-params
+/api/custom-it

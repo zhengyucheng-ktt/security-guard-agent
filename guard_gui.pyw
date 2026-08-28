@@ -215,6 +215,7 @@ class GuardConfigGUI:
         self.dp_eps_var = tk.StringVar(value="1.0")
         self.behavior_var = tk.BooleanVar(value=False)
         self.style_judge_var = tk.BooleanVar(value=False)
+        self.rewrite_var = tk.BooleanVar(value=False)
 
         # 自动刷新 / 自动滚动开关
         self.session_auto = tk.BooleanVar(value=True)
@@ -400,6 +401,7 @@ class GuardConfigGUI:
             'dp_epsilon': float(self.dp_eps_var.get() or 1.0),
             'enable_behavior_analysis': self.behavior_var.get(),
             'enable_llm_style_judge': self.style_judge_var.get(),
+            'enable_auto_rewrite': self.rewrite_var.get(),
         }
         try:
             resp = requests.put(f"{API_BASE}/config", json=config, headers=admin_headers(True), timeout=3)
@@ -476,6 +478,8 @@ class GuardConfigGUI:
             self.behavior_var.set(bool(cfg['enable_behavior_analysis']))
         if 'enable_llm_style_judge' in cfg:
             self.style_judge_var.set(bool(cfg['enable_llm_style_judge']))
+        if 'enable_auto_rewrite' in cfg:
+            self.rewrite_var.set(bool(cfg['enable_auto_rewrite']))
         if not silent:
             self._append_log("✅ 已同步服务端配置")
 
@@ -1147,6 +1151,8 @@ class GuardConfigGUI:
         self._btn(toolbar, "🔄 刷新", lambda: self._load_audit_logs_async(auto=self.audit_auto.get()),
                   bg='#2196F3').pack(side='left', padx=5)
         self._btn(toolbar, "🧹 清空文件", self._clear_audit_file, bg='#f44336').pack(side='left', padx=5)
+        self._btn(toolbar, "📤 导出报表", self._export_audit, bg='#4CAF50').pack(side='left', padx=5)
+        self._btn(toolbar, "🔒 校验完整性", self._verify_audit, bg='#FF9800').pack(side='left', padx=5)
         self._btn(toolbar, "📂 打开日志目录", self._open_log_dir, bg='#607D8B').pack(side='left', padx=5)
         tk.Checkbutton(toolbar, text="自动刷新(5秒)", variable=self.audit_auto, bg='white',
                        font=("Microsoft YaHei", 9)).pack(side='left', padx=5)
@@ -1158,6 +1164,43 @@ class GuardConfigGUI:
         self.audit_text.pack(fill='both', expand=True, padx=5, pady=5)
         tk.Label(tab, text=f"仅显示最近 {AUDIT_TAIL} 行（审计日志按天轮转：audit.log 为当日，历史见 audit-YYYYMMDD.log）",
                  bg='white', fg='#999', font=("Microsoft YaHei", 8)).pack(anchor='w', padx=5)
+
+    def _export_audit(self):
+        """导出审计日志为 CSV（Excel 直接打开）。"""
+        try:
+            resp = requests.get(f"{API_BASE}/logs/export", headers=admin_headers(), timeout=10)
+            if resp.status_code == 200:
+                path = os.path.join(SCRIPT_DIR, "audit-export.csv")
+                with open(path, "wb") as f:
+                    f.write(resp.content)
+                self._append_log(f"✅ 报表已导出: {path}")
+                if messagebox.askyesno("导出成功", f"已保存到 {path}\n是否打开？"):
+                    os.startfile(path)
+            elif not self._check_resp(resp):
+                return
+            else:
+                messagebox.showerror("错误", f"导出失败: {resp.status_code}")
+        except Exception as e:
+            messagebox.showerror("错误", f"导出失败: {e}")
+
+    def _verify_audit(self):
+        """校验审计日志哈希链完整性（防篡改）。"""
+        def task():
+            try:
+                resp = requests.get(f"{API_BASE}/logs/verify", headers=admin_headers(), timeout=10)
+                if resp.status_code == 200:
+                    d = resp.json()
+                    if d.get('valid'):
+                        msg = f"✅ 审计日志完整（校验 {d.get('checked')} 条，无篡改）"
+                    else:
+                        msg = f"⚠️ 检测到 {d.get('broken')} 条被篡改！"
+                    self.root.after(0, lambda: (self._append_log(msg),
+                                                messagebox.showinfo('完整性校验', msg)))
+                elif not self._check_resp(resp):
+                    return
+            except Exception as e:
+                self.root.after(0, lambda: self._append_log(f"❌ 校验失败: {e}"))
+        threading.Thread(target=task, daemon=True).start()
 
     def _open_log_dir(self):
         try:
@@ -1338,11 +1381,14 @@ class GuardConfigGUI:
         tk.Label(frame, text="LLM话术判断:", bg='white', font=("Microsoft YaHei", 10)).grid(row=24, column=0, sticky='w', pady=4)
         tk.Checkbutton(frame, variable=self.style_judge_var, bg='white',
                        font=("Microsoft YaHei", 10)).grid(row=24, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="低风险自动改写:", bg='white', font=("Microsoft YaHei", 10)).grid(row=25, column=0, sticky='w', pady=4)
+        tk.Checkbutton(frame, variable=self.rewrite_var, bg='white',
+                       font=("Microsoft YaHei", 10)).grid(row=25, column=1, sticky='w', pady=4)
 
-        tk.Label(frame, text="", bg='white').grid(row=25, column=0, pady=4)
-        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=26, column=0, columnspan=2, sticky='w', pady=6)
+        tk.Label(frame, text="", bg='white').grid(row=26, column=0, pady=4)
+        self._btn(frame, "💾 保存全部配置", self._save_config, bg='#4CAF50', width=16).grid(row=27, column=0, columnspan=2, sticky='w', pady=6)
         self._btn(frame, "🔄 从服务端刷新", lambda: self._sync_config_from_server(silent=False),
-                  bg='#2196F3', width=16).grid(row=26, column=1, sticky='w', pady=6)
+                  bg='#2196F3', width=16).grid(row=27, column=1, sticky='w', pady=6)
 
         tip = ("说明：\n"
                "· 差分隐私：开启后对输出统计数字加入 Laplace 噪声（仅建议聚合统计输出启用）\n"
@@ -1355,6 +1401,7 @@ class GuardConfigGUI:
                "· 账号信誉分：违规跨会话累计，低信誉账号直接降权\n"
                "· 机器行为分析：请求间隔过于均匀 → 判定为自动化并拦截（真人点击随机）\n"
                "· LLM话术判断：审核模型额外判断机械化刷屏话术（对明显重复才判，默认关）\n"
+               "· 低风险自动改写：命中敏感词的内容自动替换为***继续对话（返回 rewritten_input）\n"
                "· 业务调用密钥：业务系统调 /v1/guard 时需携带 X-Guard-Key（留空则不鉴权）\n"
                "· 安全审核 LLM（可插拔）：local=本地模型 / cloud=云端 / hybrid=本地初筛+云端终审\n"
                "    本地用 Ollama（OpenAI 兼容端点）；云端填接口+模型+Key（如 deepseek-chat）\n"
