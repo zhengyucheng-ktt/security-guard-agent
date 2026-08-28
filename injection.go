@@ -96,7 +96,60 @@ func decodeOnce(content string) string {
 			return dec
 		}
 	}
+	// Hex 编码（每 4 位十六进制 = 一个 Unicode 字符，可含空格分隔）
+	if strings.Contains(content, "hex:") || isMostlyHex(content) {
+		if dec := decodeHexText(content); dec != "" && dec != content && isReadableText(dec) {
+			return dec
+		}
+	}
 	return ""
+}
+
+// isMostlyHex 判断字符串是否以十六进制字符为主（用于触发 hex 解码尝试）
+func isMostlyHex(content string) bool {
+	digits := 0
+	total := 0
+	for _, r := range content {
+		if r == ' ' || r == ':' {
+			continue
+		}
+		total++
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			digits++
+		}
+	}
+	return total >= 8 && digits*10 >= total*9
+}
+
+// decodeHexText 将 hex 字符序列还原为中文：每 4 位 hex = 1 个 Unicode 字符（如 5ffd 7565 → 忽略）
+func decodeHexText(content string) string {
+	// 先剥掉 "hex:" / "hex：" 等前缀标记
+	s := content
+	if idx := strings.Index(s, ":"); idx > 0 {
+		prefix := strings.ToLower(s[:idx])
+		if strings.Contains(prefix, "hex") {
+			s = s[idx+1:]
+		}
+	}
+	// 去空白，其余必须是连续 hex 数字
+	compact := strings.Map(func(r rune) rune {
+		if r == ' ' {
+			return -1
+		}
+		return r
+	}, s)
+	if len(compact)%4 != 0 || len(compact) < 8 {
+		return ""
+	}
+	var b strings.Builder
+	for i := 0; i+4 <= len(compact); i += 4 {
+		code, err := strconv.ParseUint(compact[i:i+4], 16, 32)
+		if err != nil {
+			return ""
+		}
+		b.WriteRune(rune(code))
+	}
+	return b.String()
 }
 
 // decodeHTMLEntities 将 &#xXXXX; 与 &#XXXX; 数字实体还原为字符
@@ -171,7 +224,7 @@ func isReadableText(s string) bool {
 	return true
 }
 
-// matchCandidates 生成用于匹配的候选文本（原文 + 归一化 + 解码变体）
+// matchCandidates 生成用于匹配的候选文本（原文 + 归一化 + 解码变体 + 反转变体）
 func matchCandidates(content string) []string {
 	cands := []string{content}
 	if norm := normalizeForMatch(content); norm != "" && norm != content {
@@ -180,7 +233,21 @@ func matchCandidates(content string) []string {
 	if dec := tryDecodeVariants(content); dec != "" && dec != content {
 		cands = append(cands, dec)
 	}
+	// 反转文本候选：对抗"反写"混淆（如 则规略忽 → 忽略规则）
+	rev := reverseRunes(content)
+	if rev != content && len([]rune(rev)) >= 3 {
+		cands = append(cands, rev)
+	}
 	return cands
+}
+
+// reverseRunes 反转字符串（按 rune，正确处理中文）
+func reverseRunes(s string) string {
+	rs := []rune(s)
+	for i, j := 0, len(rs)-1; i < j; i, j = i+1, j-1 {
+		rs[i], rs[j] = rs[j], rs[i]
+	}
+	return string(rs)
 }
 
 // ---- ② 间接注入 / 注入词扫描 ----

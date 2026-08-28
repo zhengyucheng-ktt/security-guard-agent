@@ -1933,6 +1933,8 @@ func isSuspicious(content string) bool {
 		"系统提示", "底层规则", "敏感", "配置", "设定", "指令", "隐藏",
 		"突破", "获取", "泄露", "窃取",
 		"不受任何限制", "DAN", "越狱模式",
+		// 拼音/谐音/语义类攻击触发词（触发 LLM 深度判定，避免直接误拦）
+		"hu lve", "gui ze", "胡略", "住址",
 		"system prompt", "system_prompt", "prompt injection", "初始指令",
 		// 英文注入/越狱特征（触发 LLM 深度审核）——用组合避免误伤正常英文
 		"ignore all", "ignore rules", "ignore previous", "ignore instructions",
