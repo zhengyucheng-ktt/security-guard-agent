@@ -498,6 +498,7 @@ func loadRules() {
 		`(?i)(系统|底层|原始).*?提示词`:                "检测到尝试获取系统提示词",
 		`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`: "检测到身份证号",
 		`1[3-9]\d{9}`:                           "检测到手机号",
+		`\b[1-9]\d{11,18}\b`:                    "检测到银行卡号",
 		`(?i)exec.*?\(`:                         "检测到危险系统命令",
 		`(?i)eval.*?\(`:                         "检测到危险系统命令",
 		`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`: "检测到邮箱地址",
@@ -724,6 +725,11 @@ func checkParams(params map[string]interface{}) (bool, string, int) {
                 }
             }
         }
+
+        // ★★★ 5. 数组型批量参数检测：任何参数值是数组且长度超阈值 → 疑似批量操作 ★★★
+        if arr, ok := value.([]interface{}); ok && len(arr) >= 5 {
+            return false, fmt.Sprintf("参数 %s 为批量数组（%d 项），疑似批量操作", key, len(arr)), SCORE_SENSITIVE
+        }
     }
     return true, "", SCORE_NORMAL
 }
@@ -820,7 +826,7 @@ var allowedParamKeys = map[string][]string{
 	"/api/news/list":     {"category", "limit"},
 }
 
-func sanitizeParams(toolName string, params map[string]interface{}) map[string]interface{} {
+func sanitizeParams(toolName string, params map[string]interface{}) (map[string]interface{}, bool) {
 	allowed, exists := allowedParamKeys[toolName]
 	if !exists {
 		// 非内置工具：若在白名单中则透传参数（仍会经过 checkParams 深度校验）
@@ -834,17 +840,31 @@ func sanitizeParams(toolName string, params map[string]interface{}) map[string]i
 		}
 		whitelistMu.RUnlock()
 		if inWhitelist {
-			return params
+			return params, false
 		}
-		return make(map[string]interface{})
+		return make(map[string]interface{}), false
 	}
 	cleaned := make(map[string]interface{})
+	hasUnknown := false
 	for _, key := range allowed {
 		if val, ok := params[key]; ok {
 			cleaned[key] = val
 		}
 	}
-	return cleaned
+	// 内置工具收到未声明的参数键 → fail-closed 标记拦截（防注入多余参数）
+	for key := range params {
+		found := false
+		for _, ak := range allowed {
+			if key == ak {
+				found = true
+				break
+			}
+		}
+		if !found {
+			hasUnknown = true
+		}
+	}
+	return cleaned, hasUnknown
 }
 
 // ============================================================
@@ -1135,7 +1155,16 @@ func guardHandler(c *gin.Context) {
     }
 
     // ★★★ 第二层：参数清洗（内置工具按允许键过滤；白名单自定义工具透传） ★★★
-    req.ToolParams = sanitizeParams(req.ToolName, req.ToolParams)
+    cleaned, hasUnknown := sanitizeParams(req.ToolName, req.ToolParams)
+    req.ToolParams = cleaned
+    if hasUnknown {
+        blockReason = fmt.Sprintf("工具 %s 收到未声明参数，已拦截", req.ToolName)
+        delta = SCORE_SENSITIVE
+        decision = "block"
+        riskLevel = "high"
+        log.Printf("🛑 参数清洗拦截（未声明参数）: %s", req.ToolName)
+        break
+    }
 
     // ★★★ 第三层：参数深度校验 ★★★
     if len(req.ToolParams) > 0 && decision == "allow" {

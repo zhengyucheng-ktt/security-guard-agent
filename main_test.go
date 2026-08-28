@@ -296,24 +296,31 @@ func TestUpdateSessionScoreMemory(t *testing.T) {
 // ============================================================
 
 func TestSanitizeParams(t *testing.T) {
-	// 内置工具：按允许键过滤
-	got := sanitizeParams("/api/weather/query", map[string]interface{}{"city": "北京", "evil": 1})
+	// 内置工具：按允许键过滤，未声明键标记 hasUnknown
+	got, unknown := sanitizeParams("/api/weather/query", map[string]interface{}{"city": "北京", "evil": 1})
 	if _, ok := got["evil"]; ok {
 		t.Error("非允许参数应被剔除")
 	}
 	if got["city"] != "北京" {
 		t.Error("允许参数应保留")
 	}
+	if !unknown {
+		t.Error("存在未声明参数时 hasUnknown 应为 true")
+	}
+	_, unknown2 := sanitizeParams("/api/weather/query", map[string]interface{}{"city": "北京"})
+	if unknown2 {
+		t.Error("全部为允许参数时 hasUnknown 应为 false")
+	}
 	// 白名单自定义工具：透传
 	whitelistMu.Lock()
 	whitelist = append(whitelist, "/api/custom-params")
 	whitelistMu.Unlock()
-	got2 := sanitizeParams("/api/custom-params", map[string]interface{}{"a": 1, "b": "x"})
+	got2, _ := sanitizeParams("/api/custom-params", map[string]interface{}{"a": 1, "b": "x"})
 	if len(got2) != 2 {
 		t.Errorf("白名单自定义工具参数应透传, 得到 %v", got2)
 	}
 	// 未知工具：清空
-	got3 := sanitizeParams("/api/unknown", map[string]interface{}{"a": 1})
+	got3, _ := sanitizeParams("/api/unknown", map[string]interface{}{"a": 1})
 	if len(got3) != 0 {
 		t.Errorf("未知工具参数应清空, 得到 %v", got3)
 	}

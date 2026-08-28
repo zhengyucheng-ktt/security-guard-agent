@@ -10,6 +10,7 @@ package main
 import (
 	"encoding/base64"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -49,7 +50,7 @@ func tryDecodeVariants(content string) string {
 	return ""
 }
 
-// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64
+// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64（支持 B64: 前缀），再 Unicode 转义
 func decodeOnce(content string) string {
 	// URL 编码：仅当含 %（URL 编码标记）时尝试，避免把 Base64 的 + 误当空格
 	if strings.Contains(content, "%") {
@@ -57,13 +58,20 @@ func decodeOnce(content string) string {
 			return dec
 		}
 	}
-	// Base64 编码：去空白后长度合规（%4==0）时尝试，结果须为可读文本才采纳
+	// Base64 编码：支持常见前缀标记（B64:/base64:/b64:），去空白后长度合规时尝试
+	b64Text := content
+	if idx := strings.Index(b64Text, ":"); idx > 0 {
+		prefix := strings.ToLower(b64Text[:idx])
+		if prefix == "b64" || prefix == "base64" || prefix == "b64:" || strings.HasPrefix(prefix, "base64") {
+			b64Text = b64Text[idx+1:]
+		}
+	}
 	compact := strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {
 			return -1
 		}
 		return r
-	}, content)
+	}, b64Text)
 	if len(compact)%4 == 0 && len(compact) >= 8 {
 		if dec, err := base64.StdEncoding.DecodeString(compact); err == nil {
 			s := string(dec)
@@ -72,7 +80,38 @@ func decodeOnce(content string) string {
 			}
 		}
 	}
+	// Unicode 转义（\uXXXX）：形如 忽\u7565\u89c4\u5219 → 忽略规则
+	if strings.Contains(content, "\\u") {
+		if dec := decodeUnicodeEscapes(content); dec != "" && dec != content && isReadableText(dec) {
+			return dec
+		}
+	}
 	return ""
+}
+
+// decodeUnicodeEscapes 将 \uXXXX（含大小写、可选 \UXXXXXXXX）转义序列还原为字符
+func decodeUnicodeEscapes(content string) string {
+	var b strings.Builder
+	b.Grow(len(content))
+	for i := 0; i < len(content); {
+		if content[i] == '\\' && i+1 < len(content) && (content[i+1] == 'u' || content[i+1] == 'U') {
+			width := 4
+			if content[i+1] == 'U' {
+				width = 8
+			}
+			if i+2+width <= len(content) {
+				hexPart := content[i+2 : i+2+width]
+				if code, err := strconv.ParseUint(hexPart, 16, 32); err == nil {
+					b.WriteRune(rune(code))
+					i += 2 + width
+					continue
+				}
+			}
+		}
+		b.WriteByte(content[i])
+		i++
+	}
+	return b.String()
 }
 
 func isReadableText(s string) bool {
