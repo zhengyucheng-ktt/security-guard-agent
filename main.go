@@ -715,6 +715,14 @@ func checkParams(params map[string]interface{}) (bool, string, int) {
             return false, fmt.Sprintf("参数 %s 包含路径遍历", key), SCORE_SENSITIVE
         }
 
+        // ★★★ 3.5 XSS 注入检测（新增） ★★★
+        xssPatterns := []string{"<script", "javascript:", "onerror=", "onclick=", "onload=", "<img", "alert("}
+        for _, pat := range xssPatterns {
+            if strings.Contains(strings.ToLower(valStr), pat) {
+                return false, fmt.Sprintf("参数 %s 包含 XSS 注入模式", key), SCORE_SENSITIVE
+            }
+        }
+
         // ★★★ 4. 批量操作检测（新增） ★★★
         batchKeywords := []string{"batch", "all", "bulk", "mass"}
         for _, kw := range batchKeywords {
@@ -825,7 +833,7 @@ var allowedParamKeys = map[string][]string{
 	"/api/news/list":     {"category", "limit"},
 }
 
-func sanitizeParams(toolName string, params map[string]interface{}) (map[string]interface{}, bool) {
+func sanitizeParams(toolName string, params map[string]interface{}) map[string]interface{} {
 	allowed, exists := allowedParamKeys[toolName]
 	if !exists {
 		// 非内置工具：若在白名单中则透传参数（仍会经过 checkParams 深度校验）
@@ -839,31 +847,27 @@ func sanitizeParams(toolName string, params map[string]interface{}) (map[string]
 		}
 		whitelistMu.RUnlock()
 		if inWhitelist {
-			return params, false
+			return params
 		}
-		return make(map[string]interface{}), false
+		return make(map[string]interface{})
 	}
 	cleaned := make(map[string]interface{})
-	hasUnknown := false
-	for _, key := range allowed {
-		if val, ok := params[key]; ok {
-			cleaned[key] = val
-		}
-	}
-	// 内置工具收到未声明的参数键 → fail-closed 标记拦截（防注入多余参数）
-	for key := range params {
-		found := false
+	for key, val := range params {
+		allowedKey := false
 		for _, ak := range allowed {
 			if key == ak {
-				found = true
+				allowedKey = true
 				break
 			}
 		}
-		if !found {
-			hasUnknown = true
+		if allowedKey {
+			cleaned[key] = val // 允许键保留
+		} else if _, isArr := val.([]interface{}); isArr {
+			cleaned[key] = val // 数组参数保留，交由 checkParams 批量检测（≥5 拦截，≤4 放行）
 		}
+		// 其余未声明键：消毒剔除（工具收不到，防止参数注入）
 	}
-	return cleaned, hasUnknown
+	return cleaned
 }
 
 // ============================================================
@@ -1153,17 +1157,8 @@ func guardHandler(c *gin.Context) {
         break
     }
 
-    // ★★★ 第二层：参数清洗（内置工具按允许键过滤；白名单自定义工具透传） ★★★
-    cleaned, hasUnknown := sanitizeParams(req.ToolName, req.ToolParams)
-    req.ToolParams = cleaned
-    if hasUnknown {
-        blockReason = fmt.Sprintf("工具 %s 收到未声明参数，已拦截", req.ToolName)
-        delta = SCORE_SENSITIVE
-        decision = "block"
-        riskLevel = "high"
-        log.Printf("🛑 参数清洗拦截（未声明参数）: %s", req.ToolName)
-        break
-    }
+    // ★★★ 第二层：参数清洗（内置工具按允许键过滤；数组参数保留给批量检测；白名单自定义工具透传） ★★★
+    req.ToolParams = sanitizeParams(req.ToolName, req.ToolParams)
 
     // ★★★ 第三层：参数深度校验 ★★★
     if len(req.ToolParams) > 0 && decision == "allow" {
@@ -1937,6 +1932,7 @@ func isSuspicious(content string) bool {
 		"无视规则", "无视指令", "无视限制", "忽视规则", "不理会规则",
 		"系统提示", "底层规则", "敏感", "配置", "设定", "指令", "隐藏",
 		"突破", "获取", "泄露", "窃取",
+		"不受任何限制", "DAN", "越狱模式",
 		"system prompt", "system_prompt", "prompt injection", "初始指令",
 		// 英文注入/越狱特征（触发 LLM 深度审核）——用组合避免误伤正常英文
 		"ignore all", "ignore rules", "ignore previous", "ignore instructions",

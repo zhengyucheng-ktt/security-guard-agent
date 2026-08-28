@@ -50,7 +50,7 @@ func tryDecodeVariants(content string) string {
 	return ""
 }
 
-// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64（支持 B64: 前缀），再 Unicode 转义
+// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64（支持多层 B64: 前缀），再 HTML 实体 / Unicode 转义
 func decodeOnce(content string) string {
 	// URL 编码：仅当含 %（URL 编码标记）时尝试，避免把 Base64 的 + 误当空格
 	if strings.Contains(content, "%") {
@@ -58,13 +58,17 @@ func decodeOnce(content string) string {
 			return dec
 		}
 	}
-	// Base64 编码：支持常见前缀标记（B64:/base64:/b64:），去空白后长度合规时尝试
+	// Base64 编码：支持常见前缀标记（B64:/base64:/b64:，可多层），去空白后长度合规时尝试
 	b64Text := content
-	if idx := strings.Index(b64Text, ":"); idx > 0 {
-		prefix := strings.ToLower(b64Text[:idx])
-		if prefix == "b64" || prefix == "base64" || prefix == "b64:" || strings.HasPrefix(prefix, "base64") {
-			b64Text = b64Text[idx+1:]
+	for {
+		if idx := strings.Index(b64Text, ":"); idx > 0 {
+			prefix := strings.ToLower(b64Text[:idx])
+			if prefix == "b64" || prefix == "base64" || strings.HasPrefix(prefix, "base64") {
+				b64Text = b64Text[idx+1:]
+				continue
+			}
 		}
+		break
 	}
 	compact := strings.Map(func(r rune) rune {
 		if unicode.IsSpace(r) {
@@ -80,6 +84,12 @@ func decodeOnce(content string) string {
 			}
 		}
 	}
+	// HTML 实体（&#xXXXX; / &#XXXX; / &name;）
+	if strings.Contains(content, "&#") {
+		if dec := decodeHTMLEntities(content); dec != "" && dec != content && isReadableText(dec) {
+			return dec
+		}
+	}
 	// Unicode 转义（\uXXXX）：形如 忽\u7565\u89c4\u5219 → 忽略规则
 	if strings.Contains(content, "\\u") {
 		if dec := decodeUnicodeEscapes(content); dec != "" && dec != content && isReadableText(dec) {
@@ -87,6 +97,41 @@ func decodeOnce(content string) string {
 		}
 	}
 	return ""
+}
+
+// decodeHTMLEntities 将 &#xXXXX; 与 &#XXXX; 数字实体还原为字符
+func decodeHTMLEntities(content string) string {
+	var b strings.Builder
+	b.Grow(len(content))
+	for i := 0; i < len(content); {
+		if content[i] == '&' && i+2 < len(content) && content[i+1] == '#' {
+			j := i + 2
+			hexMode := false
+			if j < len(content) && (content[j] == 'x' || content[j] == 'X') {
+				hexMode = true
+				j++
+			}
+			start := j
+			for j < len(content) && content[j] != ';' {
+				j++
+			}
+			if j < len(content) {
+				numStr := content[start:j]
+				base := 10
+				if hexMode {
+					base = 16
+				}
+				if code, err := strconv.ParseUint(numStr, base, 32); err == nil {
+					b.WriteRune(rune(code))
+					i = j + 1
+					continue
+				}
+			}
+		}
+		b.WriteByte(content[i])
+		i++
+	}
+	return b.String()
 }
 
 // decodeUnicodeEscapes 将 \uXXXX（含大小写、可选 \UXXXXXXXX）转义序列还原为字符
@@ -143,6 +188,8 @@ func matchCandidates(content string) []string {
 var injectionKeywords = []string{
 	"忽略", "忘记", "提示词", "底层规则", "系统提示", "system prompt", "system_prompt",
 	"忽略限制", "越狱", "绕过", "覆盖指令", "无视规则", "prompt injection",
+	// 思维链/工具类危险意图（AI 自主产生或诱导产生）
+	"删除所有", "导出数据", "转走", "报复", "外部服务器", "泄密",
 }
 
 // checkInjection 综合检测注入意图（对候选变体逐一匹配规则与关键词）
