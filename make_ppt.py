@@ -128,6 +128,23 @@ def card(slide, x, y, w, h, title, lines, title_color=NAVY2, title_size=16):
         first = False
         prev_concl = is_concl
 
+def card2x2(slide, x, y, w, h, title, items):
+    """卡片：标题 + 4 条内容排 2×2 网格（左右对称，每边 2 条），字体与普通卡一致（标题16/内容14）"""
+    add_rect(slide, x, y, w, h, LIGHT, BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
+    add_text(slide, x + 0.22, y + 0.08, w - 0.44, 0.4, title, 16, NAVY2, True)
+    half_w = (w - 0.9) / 2.0
+    cell_h = (h - 0.6) / 2.0
+    for i, item in enumerate(items):
+        col = i % 2
+        row = i // 2
+        bx = x + 0.25 + col * (half_w + 0.2)
+        by = y + 0.55 + row * cell_h
+        is_concl = item.startswith("~")
+        text = item.lstrip("~")
+        add_text(slide, bx, by, half_w, cell_h - 0.08, text, 14,
+                 NAVY2 if is_concl else DARK, is_concl,
+                 PP_ALIGN.LEFT, MSO_ANCHOR.MIDDLE, spacing=1.1)
+
 def flow_row(slide, x, y, w, h, steps, arrow_w=0.42, size=12.5):
     """横向简易流程图：圆角矩形步骤 + 金色箭头，steps = [标签1, 标签2, ...]"""
     n = len(steps)
@@ -415,27 +432,26 @@ section(s, "03", "思维链监控", "AI 动手之前，先拦住它的危险念�
     ]),
 ])
 
-# ===== 12 审计溯源 =====
+# ===== 12 审计溯源（顶部卡 2×2 网格） =====
 s = prs.slides.add_slide(BLANK)
-section(s, "04", "审计与溯源：全程留痕、可校验", "日志可溯源，改动任何一条都能被发现", [
-    ("攻击类型自动标签", [
-        "~每条记录自动标注攻击类型",
-        "注入 / 隐私",
-        "违规 / 滥用",
-        "未授权工具 / 系统 / 其他",
-    ]),
-    ("哈希链防篡改", [
-        "每条记录含上一条哈希",
-        "环环相扣，改动即暴露",
-        "一键校验完整性",
-        "旧格式兼容校验不断链",
-    ]),
-    ("管理能力", [
-        "CSV 报表一键导出",
-        "Excel 直接打开",
-        "只读 Token 给查看者",
-        "耗时字段全程记录",
-    ]),
+title_bar(s, "04 · 审计与溯源：全程留痕、可校验", "日志可溯源，改动任何一条都能被发现")
+card2x2(s, 1.0, 1.85, 11.3, 1.7, "攻击类型自动标签", [
+    "每条记录自动标注攻击类型",
+    "按天轮转归档",
+    "注入 / 隐私 / 违规 / 滥用",
+    "未授权工具 / 系统 / 其他",
+])
+card(s, 1.0, 3.7, 5.55, 2.85, "哈希链防篡改", [
+    "每条记录含上一条哈希",
+    "环环相扣，改动即暴露",
+    "一键校验完整性",
+    "旧格式兼容校验不断链",
+])
+card(s, 6.78, 3.7, 5.55, 2.85, "管理能力", [
+    "CSV 报表一键导出",
+    "Excel 直接打开",
+    "只读 Token 给查看者",
+    "耗时字段全程记录",
 ])
 
 # ===== 13 业务接入（三步流程 + SDK 演示 + 标准 API） =====
