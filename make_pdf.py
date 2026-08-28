@@ -131,11 +131,16 @@ def footer(canv, doc):
 # ---------- 卡片 ----------
 def card(title, lines, bg=LIGHT, border=BORDER):
     body = []
+    prev_concl = True  # 开头视为结论态，避免首行前空行
     for ln in lines:
-        if ln.startswith("["):
+        is_concl = ln.startswith("[")
+        if is_concl and not prev_concl:
+            body.append(Paragraph(" ", S["small"]))  # 分点 → 结论：插入空行（视觉间隔）
+        if is_concl:
             body.append(Paragraph("<font name='SIMHEI' color='#2E8B57'>" + ln.strip("[]") + "</font>", S["body_b"]))
         else:
             body.append(bullet(ln))
+        prev_concl = is_concl
     # 注意：每条 bullet 必须单独成行（[[b1],[b2],...]），
     # 若直接传 [b1,b2,...] 会被 Table 当作"一行多列"导致宽度错乱
     rows = [[Paragraph(title, S["card_t"])]] + [[b] for b in body]
