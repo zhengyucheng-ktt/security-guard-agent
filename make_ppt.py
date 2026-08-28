@@ -433,22 +433,26 @@ section(s, "04", "审计与溯源：全程留痕、可校验", "日志可溯源�
     ]),
 ])
 
-# ===== 13 业务接入（两种方式 + 代码演示） =====
+# ===== 13 业务接入（三步流程 + SDK 演示 + 标准 API） =====
 s = prs.slides.add_slide(BLANK)
-title_bar(s, "05 · 业务接入", "两种接入方式：黑箱 SDK（推荐）或标准 API（精细控制）")
-card(s, 1.0, 1.65, 5.5, 2.4, "方式一：黑箱 SDK（推荐非技术用户）", [
+title_bar(s, "05 · 业务接入", "三步接入，5 分钟跑通；黑箱 SDK 与标准 API 按需选择")
+# 三步接入流程
+flow_row(s, 0.7, 1.6, 11.9, 1.0, ["① 解压启动", "② 配置密钥", "③ 代码接入"], size=13)
+add_text(s, 0.7, 2.7, 11.9, 0.35, "绿色 ZIP 解压即用 → GUI 生成业务密钥（guard_api_key）→ 一行代码接入", 12, GREY, False, PP_ALIGN.CENTER)
+# 中部：黑箱 SDK 说明 + 代码演示
+card(s, 1.0, 3.2, 5.4, 2.6, "黑箱 SDK（推荐非技术用户）", [
     "一行包装你的大模型，自动完成全套防护",
     "输入审核 → 工具防护 → 输出脱敏，无需关心",
     "拦截时抛出 GuardBlocked，原因可直接展示",
     "~session / user 标识都不用管，SDK 自动处理",
 ])
-add_rect(s, 6.9, 1.65, 5.4, 2.4, RGBColor(0xED, 0xF1, 0xF5), BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
-add_text(s, 7.15, 1.8, 4.9, 2.0, "from guard_sdk import Guard\nguard = Guard(api_key=\"\")\nsafe_llm = guard.wrap_llm(my_llm)\nreply = safe_llm(\"用户说的话\")", 13, NAVY2, True)
-card(s, 1.0, 4.35, 11.3, 2.3, "方式二：标准 API（精细控制，适合深度集成）", [
-    "四环节：user_input / tool_call / tool_result / output，外加思维链 thinking",
-    "每个环节返回 decision / block_reason / risk_level / current_score / latency_ms",
-    "工具端可调用 validate-token 自证授权，防越权调用",
-    "~两种方式按需选择，业务侧全程可观测可追溯",
+add_rect(s, 6.8, 3.2, 5.5, 2.6, RGBColor(0xED, 0xF1, 0xF5), BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
+add_text(s, 7.05, 3.35, 5.0, 0.5, "接入示例（仅 4 行代码）", 13, NAVY2, True)
+add_text(s, 7.05, 3.85, 5.0, 1.9, "from guard_sdk import Guard\nguard = Guard(api_key=\"你的密钥\")\nsafe_llm = guard.wrap_llm(my_llm)\nreply = safe_llm(\"用户说的话\")", 12.5, NAVY2, True)
+# 底部：标准 API
+card(s, 1.0, 6.05, 11.3, 1.2, "标准 API（精细控制，适合深度集成）", [
+    "四环节 user_input / tool_call / tool_result / output + 思维链 thinking；每个环节返回 decision / block_reason / risk_level / latency_ms；工具端 validate-token 自证授权",
+    "~两种方式按需选择：要省事用 SDK，要精细控制用 API，全程可观测可追溯",
 ])
 
 # ===== 14 性能量化 =====
