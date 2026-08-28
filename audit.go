@@ -20,7 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// auditRecord 审计记录（含攻击类型标签与防篡改哈希）
+// auditRecord 审计记录（含攻击类型标签、防篡改哈希、性能耗时）
 type auditRecord struct {
 	Time       string `json:"time"`
 	SessionID  string `json:"session_id"`
@@ -32,6 +32,8 @@ type auditRecord struct {
 	Reason     string `json:"reason"`
 	Score      int    `json:"score"`
 	AttackType string `json:"attack_type,omitempty"` // 标准化攻击类型标签
+	LatencyMs  int    `json:"latency_ms,omitempty"`  // 本次请求总耗时（毫秒）
+	LlmMs      int    `json:"llm_ms,omitempty"`      // 大模型判断耗时（毫秒）
 	Hash       string `json:"hash,omitempty"`        // 防篡改哈希（链式）
 }
 
@@ -69,8 +71,18 @@ func classifyAttack(reason string) string {
 	}
 }
 
-// computeAuditHash 计算单条审计记录的链式哈希（不含本行 Hash 字段）
+// computeAuditHash 计算单条审计记录的链式哈希（不含本行 Hash 字段，含性能耗时）
 func computeAuditHash(prevHash string, rec auditRecord) string {
+	payload := prevHash + "|" + rec.Time + "|" + rec.SessionID + "|" + rec.UserID + "|" + rec.ActionType +
+		"|" + rec.Content + "|" + rec.Decision + "|" + rec.RiskLevel + "|" + rec.Reason +
+		"|" + strconv.Itoa(rec.Score) + "|" + rec.AttackType +
+		"|" + strconv.Itoa(rec.LatencyMs) + "|" + strconv.Itoa(rec.LlmMs)
+	sum := sha256.Sum256([]byte(payload))
+	return hex.EncodeToString(sum[:])
+}
+
+// computeAuditHashLegacy 旧版哈希算法（不含性能耗时字段），用于校验历史记录
+func computeAuditHashLegacy(prevHash string, rec auditRecord) string {
 	payload := prevHash + "|" + rec.Time + "|" + rec.SessionID + "|" + rec.UserID + "|" + rec.ActionType +
 		"|" + rec.Content + "|" + rec.Decision + "|" + rec.RiskLevel + "|" + rec.Reason +
 		"|" + strconv.Itoa(rec.Score) + "|" + rec.AttackType
@@ -152,7 +164,7 @@ func rotateAuditLogIfNeeded() {
 	currentLogDate = today
 }
 
-func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, reason, attackType string, score int) {
+func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, reason, attackType string, score, latencyMs, llmMs int) {
 	entry := logEntry{
 		SessionID:  sessionID,
 		UserID:     userID,
@@ -163,17 +175,19 @@ func writeAuditLog(sessionID, userID, actionType, content, decision, riskLevel, 
 		Reason:     reason,
 		Score:      score,
 		AttackType: attackType,
+		LatencyMs:  latencyMs,
+		LlmMs:      llmMs,
 	}
 	select {
 	case logChan <- entry:
 	default:
 		// 队列满时降级为同步写，避免审计记录丢失
 		log.Printf("⚠️ 审计日志队列已满，降级为同步写入")
-		writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.AttackType, entry.Score)
+		writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.AttackType, entry.Score, entry.LatencyMs, entry.LlmMs)
 	}
 }
 
-func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLevel, reason, attackType string, score int) {
+func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLevel, reason, attackType string, score, latencyMs, llmMs int) {
 	auditLogMu.Lock()
 	defer auditLogMu.Unlock()
 	rotateAuditLogIfNeeded()
@@ -189,6 +203,8 @@ func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLev
 		Reason:     reason,
 		Score:      score,
 		AttackType: attackType,
+		LatencyMs:  latencyMs,
+		LlmMs:      llmMs,
 	}
 	// 防篡改：链式哈希
 	rec.Hash = computeAuditHash(lastAuditHash(), rec)
@@ -208,7 +224,7 @@ func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLev
 func startLogWorker() {
 	go func() {
 		for entry := range logChan {
-			writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.AttackType, entry.Score)
+			writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.AttackType, entry.Score, entry.LatencyMs, entry.LlmMs)
 		}
 	}()
 }
@@ -240,7 +256,8 @@ func adminVerifyLogs(c *gin.Context) {
 			continue // 旧格式行无哈希，跳过
 		}
 		expected := computeAuditHash(prev, rec)
-		if expected != rec.Hash {
+		if expected != rec.Hash && computeAuditHashLegacy(prev, rec) != rec.Hash {
+			// 兼容：旧版本记录用旧算法校验；两者都不匹配才算被篡改
 			broken++
 			continue
 		}

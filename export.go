@@ -32,7 +32,7 @@ func adminExportLogs(c *gin.Context) {
 	var buf bytes.Buffer
 	buf.WriteString("\xEF\xBB\xBF") // UTF-8 BOM，Excel 识别中文
 	w := csv.NewWriter(&buf)
-	w.Write([]string{"时间", "会话ID", "用户ID", "类型", "内容", "决策", "风险级别", "攻击类型", "拦截原因", "积分"})
+	w.Write([]string{"时间", "会话ID", "用户ID", "类型", "内容", "决策", "风险级别", "攻击类型", "拦截原因", "积分", "总耗时(ms)", "模型耗时(ms)"})
 
 	for _, line := range strings.Split(string(logs), "\n") {
 		line = strings.TrimSpace(line)
@@ -42,12 +42,13 @@ func adminExportLogs(c *gin.Context) {
 		var rec auditRecord
 		if json.Unmarshal([]byte(line), &rec) != nil {
 			// 兼容旧文本格式
-			w.Write([]string{"", "", "", "", line, "", "", "", "", ""})
+			w.Write([]string{"", "", "", "", line, "", "", "", "", "", "", ""})
 			continue
 		}
 		w.Write([]string{
 			rec.Time, rec.SessionID, rec.UserID, rec.ActionType, rec.Content,
 			rec.Decision, rec.RiskLevel, rec.AttackType, rec.Reason, strconv.Itoa(rec.Score),
+			strconv.Itoa(rec.LatencyMs), strconv.Itoa(rec.LlmMs),
 		})
 	}
 	w.Flush()

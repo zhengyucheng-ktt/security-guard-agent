@@ -99,6 +99,8 @@ type logEntry struct {
 	Reason     string
 	Score      int
 	AttackType string
+	LatencyMs  int // 本次请求总耗时（毫秒）
+	LlmMs      int // 大模型判断耗时（毫秒）
 }
 
 
@@ -247,6 +249,8 @@ type GuardResponse struct {
 	SessionStatus string `json:"session_status,omitempty"`
 	ToolToken     string `json:"tool_token,omitempty"`     // 工具调用授权令牌（tool_call 放行时返回）
 	RewrittenInput string `json:"rewritten_input,omitempty"` // 低风险自动改写后的输入（业务可用其继续对话）
+	LatencyMs     int    `json:"latency_ms,omitempty"`     // 本次请求总耗时（毫秒，性能可观测）
+	LlmMs         int    `json:"llm_ms,omitempty"`         // 大模型判断耗时（毫秒，判定引擎开销）
 }
 
 type Rule struct {
@@ -938,6 +942,9 @@ func watchConfigByPolling() {
 // ============================================================
 
 func guardHandler(c *gin.Context) {
+	// 性能量化：总耗时 + 大模型判断耗时（毫秒）
+	guardStart := time.Now()
+	var llmMs int64
 	decision := "block"
 	riskLevel := "high"
 	blockReason := "默认拒绝，需逐层验证通过"
@@ -1017,6 +1024,11 @@ func guardHandler(c *gin.Context) {
 	forceLLM := false // 会话语境分达标后强制大模型审查
 	decision = "allow"
 	riskLevel = "low"
+	// 性能量化：请求结束时把耗时写入响应（对所有分支生效）
+	defer func() {
+		resp.LatencyMs = int(time.Since(guardStart).Milliseconds())
+		resp.LlmMs = int(llmMs)
+	}()
 
 	// 低风险自动改写（可选，仅用户输入）：PII（手机号/邮箱/身份证/银行卡/IP）先脱敏再进入
 	// 后续规则与模型判断——命中敏感信息但无恶意意图的内容可继续对话，改写结果通过
@@ -1082,7 +1094,9 @@ func guardHandler(c *gin.Context) {
 	if decision == "allow" && req.ActionType == "user_input" {
 		if forceLLM || isSuspicious(req.Content) {
 			log.Printf("🔍 内容可疑（强制审查=%v），调用大模型判断: %s", forceLLM, req.Content)
+			t0 := time.Now()
 			hasRisk, _, reason := judgeByOllama(req.Content)
+			llmMs += time.Since(t0).Milliseconds()
 			if hasRisk {
 				decision = "block"
 				riskLevel = "high"
@@ -1162,8 +1176,8 @@ func guardHandler(c *gin.Context) {
 		}
 		if risk, reason := checkInjection(req.OutputContent); risk {
 			log.Printf("🛑 间接注入拦截: %s", reason)
-			writeAuditLog(req.SessionID, req.UserID, "tool_result", req.OutputContent, "block", "high", reason, classifyAttack(reason), 0)
-			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "工具返回内容存在注入风险: " + reason})
+			writeAuditLog(req.SessionID, req.UserID, "tool_result", req.OutputContent, "block", "high", reason, classifyAttack(reason), 0, int(time.Since(guardStart).Milliseconds()), int(llmMs))
+			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "工具返回内容存在注入风险: " + reason, LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
 			return
 		}
 		safe := desensitizeContent(req.OutputContent, req.UserID)
@@ -1182,16 +1196,18 @@ func guardHandler(c *gin.Context) {
 		thinking := req.OutputContent
 		if risk, reason := checkInjection(thinking); risk {
 			log.Printf("🛑 思考过程注入拦截: %s", reason)
-			writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", reason, classifyAttack(reason), 0)
-			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在注入风险: " + reason})
+			writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", reason, classifyAttack(reason), 0, int(time.Since(guardStart).Milliseconds()), int(llmMs))
+			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在注入风险: " + reason, LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
 			return
 		}
 		if isSuspicious(thinking) {
+			t0 := time.Now()
 			hasRisk, _, reason := judgeByOllama(thinking)
+			llmMs += time.Since(t0).Milliseconds()
 			if hasRisk {
 				log.Printf("🤖 思考过程风险拦截: %s", reason)
-				writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", "大模型判断: "+reason, classifyAttack(reason), 0)
-				c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在风险: " + reason})
+				writeAuditLog(req.SessionID, req.UserID, "thinking", thinking, "block", "high", "大模型判断: "+reason, classifyAttack(reason), 0, int(time.Since(guardStart).Milliseconds()), int(llmMs))
+				c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "思考过程存在风险: " + reason, LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
 				return
 			}
 		}
@@ -1262,7 +1278,10 @@ func guardHandler(c *gin.Context) {
 		resp.RiskLevel = riskLevel
 	}
 
-	writeAuditLog(req.SessionID, req.UserID, req.ActionType, originalContent, resp.Decision, resp.RiskLevel, resp.BlockReason, classifyAttack(resp.BlockReason), resp.CurrentScore)
+	// 性能量化：主路径在写审计前手动结算耗时（defer 在函数返回时兜底）
+	resp.LatencyMs = int(time.Since(guardStart).Milliseconds())
+	resp.LlmMs = int(llmMs)
+	writeAuditLog(req.SessionID, req.UserID, req.ActionType, originalContent, resp.Decision, resp.RiskLevel, resp.BlockReason, classifyAttack(resp.BlockReason), resp.CurrentScore, resp.LatencyMs, resp.LlmMs)
 	c.JSON(http.StatusOK, resp)
 }
 

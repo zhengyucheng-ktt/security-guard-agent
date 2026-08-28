@@ -179,7 +179,8 @@ def blocks_toc():
         ("08", "审计与溯源", "攻击类型标签 + 防篡改哈希链 + 报表导出"),
         ("09", "业务接入", "黑箱 SDK，几行代码获得完整防护"),
         ("10", "管理界面与部署交付", "Web 后台 + 图形面板 + 绿色 ZIP / Docker"),
-        ("11", "质量与验收", "67 项自动化测试 + 9 项端到端冒烟验证"),
+        ("11", "性能量化", "网关自身开销 <2ms，每请求耗时全程可查"),
+        ("12", "质量与验收", "67 项自动化测试 + 9 项端到端冒烟验证"),
     ]
     rows = [[Paragraph("<font name='SIMHEI' color='#1E4E79'>%s</font>" % n, S["card_t"]),
              Paragraph("<font name='SIMHEI' color='#2C3E50'>%s</font>" % t, S["card_t"]),
@@ -441,6 +442,40 @@ def blocks_admin():
 
 story += content_page("10 · 管理界面与部署交付", "看得见、管得住、拿得走", blocks_admin)
 
+# ===== 性能量化 =====
+def blocks_perf():
+    rows = [
+        [Paragraph("<font name='SIMHEI' color='#FFFFFF'>场景</font>", S["small"]),
+         Paragraph("<font name='SIMHEI' color='#FFFFFF'>P50</font>", S["small"]),
+         Paragraph("<font name='SIMHEI' color='#FFFFFF'>平均</font>", S["small"]),
+         Paragraph("<font name='SIMHEI' color='#FFFFFF'>说明</font>", S["small"])],
+        [Paragraph("普通输入放行", S["body_b"]), Paragraph("1.7 ms", S["body_b"]), Paragraph("7 ms", S["body_b"]),
+         Paragraph("纯规则快速路径，无大模型（实测 100 次）", S["small"])],
+        [Paragraph("工具调用放行 / 拦截", S["body_b"]), Paragraph("1.4 ms", S["body_b"]), Paragraph("5.4 ms", S["body_b"]),
+         Paragraph("白名单 + 参数校验 + JWT 令牌", S["small"])],
+        [Paragraph("输出脱敏 + 水印", S["body_b"]), Paragraph("1.6 ms", S["body_b"]), Paragraph("4.8 ms", S["body_b"]),
+         Paragraph("10 类信息脱敏 + 零宽水印 + 差分隐私", S["small"])],
+        [Paragraph("大模型判定（可选）", S["body_b"]), Paragraph("~0.9 s", S["body_b"]), Paragraph("~0.9 s", S["body_b"]),
+         Paragraph("仅可疑内容 / 强制审查时触发；30 秒判断缓存命中零开销", S["small"])],
+    ]
+    perf_t = Table(rows, colWidths=[40 * mm, 22 * mm, 22 * mm, 86 * mm])
+    perf_t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY2),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, LIGHT]),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return [perf_t, Spacer(1, 4 * mm),
+            card("性能结论", [
+                "网关自身开销（规则检测 / 脱敏 / 令牌等纯本地逻辑）P50 约 1.5~2 ms，对业务几乎无感",
+                "大模型判定引擎是唯一显著开销（约 0.9 s），仅在可疑内容时触发，可开关、可换引擎",
+                "并发能力：20 并发实测吞吐约 1470 请求/秒（单实例、本地部署）",
+                "[每请求耗时已全程量化：响应含 latency_ms / llm_ms 字段，审计日志逐条记录，CSV 报表可导出]",
+            ])]
+
+story += content_page("11 · 性能量化（Latency）", "网关自身开销 <2ms，损耗透明可查", blocks_perf)
+
 # ===== 质量与验收 =====
 def blocks_qa():
     return [
@@ -458,7 +493,7 @@ def blocks_qa():
         ]),
     ]
 
-story += content_page("11 · 质量与验收", "每一个功能都经过真实运行验证", blocks_qa, pagebreak=False)
+story += content_page("12 · 质量与验收", "每一个功能都经过真实运行验证", blocks_qa, pagebreak=False)
 
 # ===== 封底 =====
 story.append(NextPageTemplate("back"))

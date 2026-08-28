@@ -708,7 +708,7 @@ func TestDesensitizeFieldsEmptyDefaults(t *testing.T) {
 
 func TestAuditLogJSONFormat(t *testing.T) {
 	// 记录一条并读回最后一行解析
-	writeAuditLogSync("audit-json-test", "u1", "user_input", "测试内容\"引号", "allow", "low", "", "other", 5)
+	writeAuditLogSync("audit-json-test", "u1", "user_input", "测试内容\"引号", "allow", "low", "", "other", 5, 12, 3)
 	data, err := os.ReadFile("audit.log")
 	if err != nil {
 		t.Fatal(err)
