@@ -77,18 +77,56 @@ def est_lines(lines, size, width):
 
 def card(slide, x, y, w, h, title, lines, title_color=NAVY2, title_size=16):
     """卡片：标题固定顶部；内容字号自适应（防出框）+ 垂直居中（消除底部空白）
-    lines 中以 '~' 开头的行不加圆点（作为整句叙述/结论）"""
+    lines 中以 '~' 开头的行 = 结论/整句叙述：前插空行、深蓝加粗、不加圆点，与分点视觉分离"""
     add_rect(slide, x, y, w, h, LIGHT, BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
     add_text(slide, x + 0.22, y + 0.08, w - 0.44, 0.4, title, title_size, title_color, True)
     avail_h = h - 0.55
+    # 估算总行数（仅"分点→结论"转换时计入空行）
+    def est_total():
+        total = 0
+        prev_concl = True  # 开头视为结论态，避免首行前空行
+        for ln in lines:
+            is_concl = ln.startswith("~")
+            if is_concl and not prev_concl:
+                total += 1  # 分点切到结论的空行
+            total += est_lines([ln.lstrip("~")], 14, w)
+            prev_concl = is_concl
+        return total
     size = 14
     while size >= 9:
-        row_h = size / 72.0 * 1.2
-        if est_lines([ln.lstrip("~") for ln in lines], size, w) * row_h <= avail_h:
+        if est_total() * (size / 72.0 * 1.2) <= avail_h:
             break
         size -= 1
-    body = "\n".join(("" if ln.startswith("~") else "• ") + ln.lstrip("~") for ln in lines)
-    add_text(slide, x + 0.25, y + 0.5, w - 0.5, avail_h, body, size, DARK, False, PP_ALIGN.LEFT, MSO_ANCHOR.MIDDLE, spacing=1.2)
+    # 逐行渲染：分点带圆点；"分点→结论"前插空行 + 结论深蓝加粗
+    tb = slide.shapes.add_textbox(Inches(x + 0.25), Inches(y + 0.5), Inches(w - 0.5), Inches(avail_h))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    first = True
+    prev_concl = True
+    for ln in lines:
+        is_concl = ln.startswith("~")
+        text = ln.lstrip("~")
+        if is_concl and not prev_concl:
+            # 分点 → 结论：插入空行（视觉间隔）
+            p = tf.add_paragraph()
+            p.line_spacing = 0.6
+            r = p.add_run()
+            r.text = " "
+            set_font(r, size, DARK, False)
+            first = False
+        p = tf.paragraphs[0] if first else tf.add_paragraph()
+        p.alignment = PP_ALIGN.LEFT
+        p.line_spacing = 1.2
+        r = p.add_run()
+        if is_concl:
+            r.text = text
+            set_font(r, size, NAVY2, True)      # 结论：深蓝加粗
+        else:
+            r.text = "• " + text
+            set_font(r, size, DARK, False)
+        first = False
+        prev_concl = is_concl
 
 def flow_row(slide, x, y, w, h, steps, arrow_w=0.42, size=12.5):
     """横向简易流程图：圆角矩形步骤 + 金色箭头，steps = [标签1, 标签2, ...]"""
