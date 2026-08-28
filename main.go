@@ -491,17 +491,16 @@ func loadRules() {
 	}
 
 	// 2. 正则规则（内置，与 rules.txt 无关）
+	// 注意：正则必须足够精确，避免误伤正常业务（如"删除聊天记录""订单号"）
 	regexRules := map[string]string{
-		`(?i)删.*?除`:                              "检测到删除相关指令",
 		`(?i)忽略.*?规则`:                           "检测到越狱尝试（忽略规则）",
 		`(?i)忘记.*?设定`:                           "检测到越狱尝试（忘记设定）",
 		`(?i)(系统|底层|原始).*?提示词`:                "检测到尝试获取系统提示词",
 		`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`: "检测到身份证号",
-		`1[3-9]\d{9}`:                           "检测到手机号",
-		`\b[1-9]\d{11,18}\b`:                    "检测到银行卡号",
-		`(?i)exec.*?\(`:                         "检测到危险系统命令",
-		`(?i)eval.*?\(`:                         "检测到危险系统命令",
-		`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`: "检测到邮箱地址",
+		`\b1[3-9]\d{9}\b`:                        "检测到手机号", // \b 词边界，避免匹配身份证/订单号子串
+		`(?i)exec.*?\(`:                          "检测到危险系统命令",
+		`(?i)eval.*?\(`:                          "检测到危险系统命令",
+		`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`: "检测到邮箱地址", // 邮箱属隐私（与手机号同等保护）
 	}
 	for pattern, reason := range regexRules {
 		re, err := regexp.Compile(pattern)
@@ -1931,16 +1930,20 @@ func extractJSON(text string) string {
 func isSuspicious(content string) bool {
 	keywords := []string{
 		"提示词", "规则", "系统", "底层", "绕过",
-		"忽略", "忘记", "管理员", "权限", "越狱",
-		"忽略所有", "忘记之前", "系统提示", "底层规则",
-		"敏感", "配置", "设定", "指令", "隐藏",
+		"管理员", "权限", "越狱",
+		// 触发词用组合而非裸词，避免正常对话（如"忽略我上一条消息""忘记密码"）被误判
+		"忽略所有", "忽略规则", "忽略指令", "忽略限制", "忽略设定", "忽略一切",
+		"忘记之前", "忘记设定", "忘记所有", "忘记规则",
+		"无视规则", "无视指令", "无视限制", "忽视规则", "不理会规则",
+		"系统提示", "底层规则", "敏感", "配置", "设定", "指令", "隐藏",
 		"突破", "获取", "泄露", "窃取",
-		"system prompt", "system_prompt", "prompt injection", "忽略限制", "初始指令",
-		// 英文注入/越狱特征（触发 LLM 深度审核）
-		"ignore", "instructions", "system prompt", "bypass", "jailbreak",
-		"reveal", "disregard", "override", "forget", "previous instructions",
+		"system prompt", "system_prompt", "prompt injection", "初始指令",
+		// 英文注入/越狱特征（触发 LLM 深度审核）——用组合避免误伤正常英文
+		"ignore all", "ignore rules", "ignore previous", "ignore instructions",
+		"ignore everything", "bypass", "jailbreak", "reveal", "disregard",
+		"override", "forget previous", "previous instructions",
 		// 对抗自测发现的盲区：忽略的同义词 + 审核标准注入特征
-		"忽视", "无视", "不理会", "判断标准", "审核标准", "拦截标准", "审核规则",
+		"判断标准", "审核标准", "拦截标准", "审核规则",
 	}
 	// 合并用户自定义触发词
 	suspiciousMu.RLock()
