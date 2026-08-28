@@ -34,3 +34,6 @@ test.json
 *~
 
 __pycache__/
+
+# 含真实密钥，不提交
+system_config.json
