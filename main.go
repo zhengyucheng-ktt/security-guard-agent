@@ -496,6 +496,7 @@ func loadRules() {
 		`(?i)忽略.*?规则`:                           "检测到越狱尝试（忽略规则）",
 		`(?i)忘记.*?设定`:                           "检测到越狱尝试（忘记设定）",
 		`(?i)(系统|底层|原始).*?提示词`:                "检测到尝试获取系统提示词",
+		`(?i)(输出|列出).{0,8}(身份证|手机号|银行卡|邮箱)`:  "检测到索取他人隐私信息", // 索取他人PII（输出/列出+类型），避免"我的身份证"误判
 		`[1-9]\d{5}(18|19|20)\d{2}(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])\d{3}[\dXx]?`: "检测到身份证号",
 		`\b1[3-9]\d{9}\b`:                        "检测到手机号", // \b 词边界，避免匹配身份证/订单号子串
 		`(?i)exec.*?\(`:                          "检测到危险系统命令",
@@ -648,12 +649,26 @@ func adminDeleteSuspiciousKeyword(c *gin.Context) {
 // ============================================================
 
 func checkInput(content string) (bool, string, int) {
+	return checkInputInner(content, false)
+}
+
+// checkInputSkipPII 跳过 PII 正则（手机号/身份证/邮箱/银行卡）——用于已自动改写（脱敏）后的内容，
+// 避免脱敏不彻底（如邮箱 z***n@test.com）或改写后残留字样触发重复拦截，造成误判
+func checkInputSkipPII(content string) (bool, string, int) {
+	return checkInputInner(content, true)
+}
+
+func checkInputInner(content string, skipPII bool) (bool, string, int) {
 	// 快照规则，避免长时间持有锁
 	rulesMu.RLock()
 	regexRules := make([]Rule, 0)
 	keywordRules := make([]Rule, 0)
 	for _, rule := range rules {
 		if rule.Type == "regex" {
+			// 已改写内容跳过 PII 正则（其原值已被脱敏为 ***）
+			if skipPII && isPIIRegexReason(rule.Reason) {
+				continue
+			}
 			regexRules = append(regexRules, rule)
 		} else {
 			keywordRules = append(keywordRules, rule)
@@ -675,6 +690,16 @@ func checkInput(content string) (bool, string, int) {
 		}
 	}
 	return true, "", SCORE_NORMAL
+}
+
+// isPIIRegexReason 判断正则规则 reason 是否属于 PII 类（手机号/身份证/邮箱/银行卡）
+func isPIIRegexReason(reason string) bool {
+	for _, kw := range []string{"手机号", "身份证", "邮箱", "银行卡"} {
+		if strings.Contains(reason, kw) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkParams(params map[string]interface{}) (bool, string, int) {
@@ -1132,7 +1157,15 @@ func guardHandler(c *gin.Context) {
 
 	switch req.ActionType {
 	case "user_input":
-		ok, reason, scoreDelta := checkInput(req.Content)
+		// 已自动改写（PII 脱敏）的内容跳过 PII 正则，避免改写不彻底/残留字样造成误判
+		var ok bool
+		var reason string
+		var scoreDelta int
+		if resp.RewrittenInput != "" {
+			ok, reason, scoreDelta = checkInputSkipPII(req.Content)
+		} else {
+			ok, reason, scoreDelta = checkInput(req.Content)
+		}
 		if !ok && decision == "allow" {
 			blockReason = reason
 			delta = scoreDelta
