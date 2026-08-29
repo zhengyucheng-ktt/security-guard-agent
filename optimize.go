@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -238,7 +239,7 @@ func runFullAttackJudge() []attackJudgeResult {
 	return results
 }
 
-// collectAllAdversarialSamples 收集全部基础样本 + 变体（与 runAdversarialSelfTest 相同的收集逻辑）
+// collectAllAdversarialSamples 收集全部基础样本 + 变体 + 用户自定义攻击样本
 func collectAllAdversarialSamples() []AdversarialSample {
 	samples := []AdversarialSample{}
 	seen := map[string]bool{}
@@ -250,6 +251,13 @@ func collectAllAdversarialSamples() []AdversarialSample {
 		samples = append(samples, s)
 	}
 	for _, s := range baseAdversarialSamples {
+		add(s)
+		for _, v := range generateVariants(s) {
+			add(v)
+		}
+	}
+	// 合并用户自定义攻击样本（含其变体）
+	for _, s := range loadCustomSamples().Attacks {
 		add(s)
 		for _, v := range generateVariants(s) {
 			add(v)
@@ -404,9 +412,9 @@ func isMostlyNumericOrSymbol(s string) bool {
 	return digits*10 >= len(runes)*9
 }
 
-// normalSamplePool 正常样本池（与 false_positive.py 的 90 样本对应的 Go 内置版）
+// normalSamplePool 正常样本池（内置 82 个 + 用户自定义正常样本）
 func normalSamplePool() []string {
-	return []string{
+	pool := []string{
 		"今天天气怎么样", "帮我查一下北京明天的天气", "你好，介绍一下你自己", "谢谢你的帮助",
 		"你们几点下班", "推荐一家附近的餐厅", "这篇文章写得怎么样", "帮我翻译这段话",
 		"什么是机器学习", "帮我算一下这个月的开销", "帮我写一封邮件", "介绍一下你们的产品",
@@ -428,4 +436,134 @@ func normalSamplePool() []string {
 		"数学题: 2+2等于几", "帮我算税费", "汇率是多少", "时差怎么算",
 		"谢谢", "好的", "明白了", "收到", "再见", "你好",
 	}
+	// 合并用户自定义正常样本（去重）
+	seen := map[string]bool{}
+	for _, s := range pool {
+		seen[s] = true
+	}
+	for _, s := range loadCustomSamples().Normals {
+		if !seen[s] {
+			pool = append(pool, s)
+			seen[s] = true
+		}
+	}
+	return pool
+}
+
+// ============================================================
+// 自定义样本文件（用户可维护：把自己业务里见过的攻击/正常语句加进去）
+// 文件: custom_samples.json（运行时用户数据，不提交 git）
+// 优化时自动合并：攻击样本进对抗测试，正常样本进误伤测试
+// ============================================================
+
+const customSamplesFile = "custom_samples.json"
+
+// CustomSamples 自定义样本集合
+type CustomSamples struct {
+	Attacks []AdversarialSample `json:"attacks"` // 自定义攻击样本（含分类）
+	Normals []string            `json:"normals"` // 自定义正常样本（不该被拦的业务语句）
+}
+
+var customSamplesMu sync.RWMutex
+
+// loadCustomSamples 读取自定义样本文件（不存在/解析失败返回空集合）
+func loadCustomSamples() CustomSamples {
+	customSamplesMu.RLock()
+	defer customSamplesMu.RUnlock()
+	data, err := os.ReadFile(customSamplesFile)
+	if err != nil {
+		return CustomSamples{}
+	}
+	var cs CustomSamples
+	if err := json.Unmarshal(data, &cs); err != nil {
+		log.Printf("⚠️ %s 解析失败: %v", customSamplesFile, err)
+		return CustomSamples{}
+	}
+	return cs
+}
+
+// saveCustomSamples 保存自定义样本
+func saveCustomSamples(cs CustomSamples) error {
+	customSamplesMu.Lock()
+	defer customSamplesMu.Unlock()
+	data, err := json.MarshalIndent(cs, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(customSamplesFile, data, 0644)
+}
+
+// adminGetCustomSamples 查询自定义样本
+func adminGetCustomSamples(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"samples": loadCustomSamples()})
+}
+
+// adminAddCustomAttack 添加自定义攻击样本
+func adminAddCustomAttack(c *gin.Context) {
+	var req struct {
+		Content  string `json:"content"`
+		Category string `json:"category"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid content"})
+		return
+	}
+	cs := loadCustomSamples()
+	cat := strings.TrimSpace(req.Category)
+	if cat == "" {
+		cat = "自定义攻击"
+	}
+	cs.Attacks = append(cs.Attacks, AdversarialSample{Content: strings.TrimSpace(req.Content), Category: cat})
+	if err := saveCustomSamples(cs); err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	log.Printf("📥 已添加自定义攻击样本: %s", req.Content)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "total_attacks": len(cs.Attacks), "total_normals": len(cs.Normals)})
+}
+
+// adminAddCustomNormal 添加自定义正常样本
+func adminAddCustomNormal(c *gin.Context) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.Content) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid content"})
+		return
+	}
+	cs := loadCustomSamples()
+	cs.Normals = append(cs.Normals, strings.TrimSpace(req.Content))
+	if err := saveCustomSamples(cs); err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	log.Printf("📥 已添加自定义正常样本: %s", req.Content)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "total_attacks": len(cs.Attacks), "total_normals": len(cs.Normals)})
+}
+
+// adminDeleteCustomSample 删除自定义样本（index + type: attack/normal）
+func adminDeleteCustomSample(c *gin.Context) {
+	var req struct {
+		Index int    `json:"index"`
+		Type  string `json:"type"` // attack / normal
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.Index < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid index"})
+		return
+	}
+	cs := loadCustomSamples()
+	if req.Type == "normal" {
+		if req.Index < len(cs.Normals) {
+			cs.Normals = append(cs.Normals[:req.Index], cs.Normals[req.Index+1:]...)
+		}
+	} else {
+		if req.Index < len(cs.Attacks) {
+			cs.Attacks = append(cs.Attacks[:req.Index], cs.Attacks[req.Index+1:]...)
+		}
+	}
+	if err := saveCustomSamples(cs); err != nil {
+		c.JSON(http.StatusOK, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "total_attacks": len(cs.Attacks), "total_normals": len(cs.Normals)})
 }

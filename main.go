@@ -2473,6 +2473,10 @@ func setupRouter() *gin.Engine {
 	admin.POST("/security/self-test", adminSelfTest)
 	admin.POST("/security/optimize", adminOptimizeLocalModel) // 一键优化：按模型量级调触发词
 	admin.GET("/security/optimize/status", adminOptimizeStatus) // 优化任务进度
+	admin.GET("/samples/custom", adminGetCustomSamples)       // 自定义样本查询
+	admin.POST("/samples/custom/attack", adminAddCustomAttack) // 添加自定义攻击样本
+	admin.POST("/samples/custom/normal", adminAddCustomNormal) // 添加自定义正常样本
+	admin.DELETE("/samples/custom", adminDeleteCustomSample)   // 删除自定义样本
 
 	return r
 }

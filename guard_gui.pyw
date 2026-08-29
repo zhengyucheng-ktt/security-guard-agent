@@ -183,8 +183,8 @@ class GuardConfigGUI:
         app = self
         self.root = root
         self.root.title("🛡️ 守护智能体 - 增强版")
-        self.root.geometry("980x760")
-        self.root.minsize(820, 620)
+        self.root.geometry("1180x780")
+        self.root.minsize(900, 620)
         self.root.configure(bg='#f5f5f5')
         self.process = None
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -680,14 +680,21 @@ class GuardConfigGUI:
         scroll.pack(side='right', fill='y')
 
         action_frame = tk.Frame(tab, bg='white')
-        action_frame.pack(fill='x', pady=5)
+        action_frame.pack(fill='x', pady=(5, 0))
         self._btn(action_frame, "✅ 启用", lambda: self._toggle_rule(True), bg='#4CAF50').pack(side='left', padx=5)
         self._btn(action_frame, "❌ 禁用", lambda: self._toggle_rule(False), bg='#FF9800').pack(side='left', padx=5)
         self._btn(action_frame, "🗑 删除选中", self._delete_rule, bg='#f44336').pack(side='left', padx=5)
-        self._btn(action_frame, "🛡 对抗自测", self._run_self_test, bg='#9C27B0').pack(side='left', padx=5)
-        self._btn(action_frame, "🧪 一键优化本地模型", self._run_optimize, bg='#FF6F00').pack(side='left', padx=5)
-        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核；自测=回归验证规则层；一键优化=按模型量级自动调触发词",
-                 bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='right', padx=10)
+
+        # 自测与优化单独一行（避免与右侧说明/窗口宽度互相挤占）
+        test_frame = tk.Frame(tab, bg='white')
+        test_frame.pack(fill='x', pady=(0, 0))
+        self._btn(test_frame, "🛡 对抗自测", self._run_self_test, bg='#9C27B0').pack(side='left', padx=5)
+        self._btn(test_frame, "🧪 一键优化本地模型", self._run_optimize, bg='#FF6F00').pack(side='left', padx=5)
+        self._btn(test_frame, "📥 自定义样本", self._manage_custom_samples, bg='#00897B').pack(side='left', padx=5)
+        # 启动自检：确认一键优化按钮已创建（排查"看不到按钮"问题）
+        print("[DEBUG] 一键优化按钮已创建 (规则管理页, _create_rules_tab)")
+        tk.Label(test_frame, text="自测=回归验证规则层；一键优化=按本地模型量级自动调触发词；自定义样本=加入你的业务语句",
+                 bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='left', padx=10)
 
     def _run_optimize(self):
         """一键优化本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
@@ -749,6 +756,126 @@ class GuardConfigGUI:
             except Exception as e:
                 win.after(5000, poll)
         poll()
+
+    def _manage_custom_samples(self):
+        """自定义样本管理：查看/添加/删除攻击样本与正常样本（优化时自动合并）。"""
+        win = tk.Toplevel(self.root)
+        win.title("📥 自定义样本管理")
+        win.geometry("760x520")
+        win.configure(bg='white')
+
+        # 说明
+        tk.Label(win, text="把你自己业务里见过的攻击语句 / 正常语句加进来，一键优化时会自动合并测试。",
+                 bg='white', fg='#555', font=("Microsoft YaHei", 9)).pack(anchor='w', padx=12, pady=(10, 2))
+
+        # 添加区
+        add_frame = tk.Frame(win, bg='white')
+        add_frame.pack(fill='x', padx=12, pady=4)
+        tk.Label(add_frame, text="语句:", bg='white', font=("Microsoft YaHei", 9)).pack(side='left')
+        entry_var = tk.StringVar()
+        entry = tk.Entry(add_frame, textvariable=entry_var, width=36, font=("Microsoft YaHei", 9))
+        entry.pack(side='left', padx=5)
+        tk.Label(add_frame, text="分类:", bg='white', font=("Microsoft YaHei", 9)).pack(side='left')
+        cat_var = tk.StringVar(value="自定义攻击")
+        tk.Entry(add_frame, textvariable=cat_var, width=10, font=("Microsoft YaHei", 9)).pack(side='left', padx=5)
+
+        add_btns = tk.Frame(win, bg='white')
+        add_btns.pack(fill='x', padx=12, pady=2)
+        self._btn(add_btns, "➕ 添加为攻击样本", lambda: self._add_custom_sample("attack", entry_var, cat_var, win),
+                  bg='#D32F2F', width=16).pack(side='left', padx=5)
+        self._btn(add_btns, "➕ 添加为正常样本", lambda: self._add_custom_sample("normal", entry_var, cat_var, win),
+                  bg='#4CAF50', width=16).pack(side='left', padx=5)
+        tk.Label(add_btns, text="攻击=应被拦截的恶意语句；正常=不该被拦的业务语句", bg='white', fg='#888',
+                 font=("Microsoft YaHei", 8)).pack(side='left', padx=8)
+
+        # 列表区（两个子列表）
+        list_frame = tk.Frame(win, bg='white')
+        list_frame.pack(fill='both', expand=True, padx=12, pady=6)
+
+        # 攻击样本列表
+        atk_lf = tk.LabelFrame(list_frame, text="攻击样本（N 个）", bg='white', font=("Microsoft YaHei", 9, "bold"))
+        atk_lf.pack(side='left', fill='both', expand=True, padx=(0, 4))
+        self._atk_list = scrolledtext.ScrolledText(atk_lf, font=("Consolas", 9), height=10, bg='#FFF5F5')
+        self._atk_list.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # 正常样本列表
+        nor_lf = tk.LabelFrame(list_frame, text="正常样本（N 个）", bg='white', font=("Microsoft YaHei", 9, "bold"))
+        nor_lf.pack(side='right', fill='both', expand=True, padx=(4, 0))
+        self._nor_list = scrolledtext.ScrolledText(nor_lf, font=("Consolas", 9), height=10, bg='#F5FFF5')
+        self._nor_list.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # 底部操作
+        bottom = tk.Frame(win, bg='white')
+        bottom.pack(fill='x', padx=12, pady=6)
+        self._btn(bottom, "🔄 刷新列表", lambda: self._refresh_custom_samples(), bg='#2196F3', width=12).pack(side='left', padx=5)
+        self._btn(bottom, "🗑 删除选中行", self._delete_custom_sample, bg='#f44336', width=12).pack(side='left', padx=5)
+        tk.Label(bottom, text="选中要删除的行后点删除；格式: 序号. 内容", bg='white', fg='#888',
+                 font=("Microsoft YaHei", 8)).pack(side='left', padx=8)
+
+        self._refresh_custom_samples()
+
+    def _refresh_custom_samples(self):
+        """刷新自定义样本列表。"""
+        try:
+            r = requests.get(f"{API_BASE}/samples/custom", headers=admin_headers(), timeout=5)
+            if r.status_code != 200:
+                return
+            d = r.json().get("samples", {})
+            attacks = d.get("attacks", [])
+            normals = d.get("normals", [])
+            self._custom_samples = {"attacks": attacks, "normals": normals}
+            if hasattr(self, '_atk_list'):
+                self._atk_list.delete(1.0, tk.END)
+                for i, a in enumerate(attacks):
+                    self._atk_list.insert(tk.END, f"{i}. [{a.get('category','')}] {a.get('content','')}\n")
+                self._nor_list.delete(1.0, tk.END)
+                for i, n in enumerate(normals):
+                    self._nor_list.insert(tk.END, f"{i}. {n}\n")
+        except Exception:
+            pass
+
+    def _add_custom_sample(self, typ, entry_var, cat_var, win):
+        content = entry_var.get().strip()
+        if not content:
+            messagebox.showinfo("提示", "请输入语句内容")
+            return
+        try:
+            if typ == "attack":
+                r = requests.post(f"{API_BASE}/samples/custom/attack",
+                                  json={"content": content, "category": cat_var.get().strip() or "自定义攻击"},
+                                  headers=admin_headers(True), timeout=5)
+            else:
+                r = requests.post(f"{API_BASE}/samples/custom/normal",
+                                  json={"content": content},
+                                  headers=admin_headers(True), timeout=5)
+            if r.status_code == 200 and r.json().get("status") == "ok":
+                entry_var.set("")
+                self._append_log(f"📥 已添加自定义样本: {content[:30]}")
+                self._refresh_custom_samples()
+            else:
+                messagebox.showerror("错误", f"添加失败: {r.text[:100]}")
+        except Exception as e:
+            messagebox.showerror("错误", f"添加异常: {e}")
+
+    def _delete_custom_sample(self):
+        """删除选中行：从当前光标所在行的编号解析索引。"""
+        # 简化：从攻击列表/正常列表当前光标行读取编号
+        for widget, typ in ((self._atk_list, "attack"), (self._nor_list, "normal")):
+            try:
+                line = widget.get("insert linestart", "insert lineend").strip()
+                if not line:
+                    continue
+                idx_str = line.split(".")[0].strip()
+                idx = int(idx_str)
+                r = requests.delete(f"{API_BASE}/samples/custom", json={"index": idx, "type": typ},
+                                    headers=admin_headers(True), timeout=5)
+                if r.status_code == 200 and r.json().get("status") == "ok":
+                    self._append_log(f"🗑 已删除自定义样本 #{idx}")
+                    self._refresh_custom_samples()
+                    return
+            except Exception:
+                continue
+        messagebox.showinfo("提示", "请先把光标放在要删除的行上")
 
     def _run_self_test(self):
         """运行对抗自测，弹窗显示穿透报告。"""
