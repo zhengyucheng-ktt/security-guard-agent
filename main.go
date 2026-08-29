@@ -2471,6 +2471,8 @@ func setupRouter() *gin.Engine {
 	admin.POST("/extract-watermark", adminExtractWatermark)
 	admin.POST("/anti-bot/reset", adminResetAntiBotCache)
 	admin.POST("/security/self-test", adminSelfTest)
+	admin.POST("/security/optimize", adminOptimizeLocalModel) // 一键优化：按模型量级调触发词
+	admin.GET("/security/optimize/status", adminOptimizeStatus) // 优化任务进度
 
 	return r
 }

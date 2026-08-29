@@ -685,8 +685,70 @@ class GuardConfigGUI:
         self._btn(action_frame, "❌ 禁用", lambda: self._toggle_rule(False), bg='#FF9800').pack(side='left', padx=5)
         self._btn(action_frame, "🗑 删除选中", self._delete_rule, bg='#f44336').pack(side='left', padx=5)
         self._btn(action_frame, "🛡 对抗自测", self._run_self_test, bg='#9C27B0').pack(side='left', padx=5)
-        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核；自测=回归验证规则层",
+        self._btn(action_frame, "🧪 一键优化本地模型", self._run_optimize, bg='#FF6F00').pack(side='left', padx=5)
+        tk.Label(action_frame, text="关键词/正则=直接拦截；NLP=按动作处理；审核触发词=触发LLM深度审核；自测=回归验证规则层；一键优化=按模型量级自动调触发词",
                  bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='right', padx=10)
+
+    def _run_optimize(self):
+        """一键优化本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
+        win = tk.Toplevel(self.root)
+        win.title("🧪 一键优化本地模型")
+        win.geometry("720x480")
+        win.configure(bg='white')
+        text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
+        text.pack(fill='both', expand=True, padx=8, pady=(8, 4))
+        text.insert(tk.END, "正在检测本地模型量级...\n")
+
+        # 启动优化任务
+        try:
+            resp = requests.post(f"{API_BASE}/security/optimize", headers=admin_headers(), timeout=10)
+            if resp.status_code != 200:
+                text.insert(tk.END, f"启动失败: HTTP {resp.status_code}\n")
+                return
+            job_id = resp.json().get("job_id")
+            text.insert(tk.END, f"优化任务已启动: {job_id}\n（后台执行，约 5 分钟，含攻击+误伤+触发词测试）\n")
+        except Exception as e:
+            text.insert(tk.END, f"启动异常: {e}\n")
+            return
+
+        def poll():
+            try:
+                r = requests.get(f"{API_BASE}/security/optimize/status", params={"job_id": job_id},
+                                 headers=admin_headers(), timeout=10)
+                if r.status_code != 200:
+                    win.after(5000, poll)
+                    return
+                o = r.json().get("optimize", {})
+                if not o.get("done"):
+                    stage = o.get("stage", "测试中")
+                    text.delete(1.0, tk.END)
+                    text.insert(tk.END, f"🔄 优化进行中...（阶段: {stage}）\n"
+                                       f"攻击测试: {o.get('attack_before', 0)}/{o.get('attack_total', '?')} 拦截\n"
+                                       f"误伤基线: {o.get('fp_before', 0)}/{o.get('fp_total', '?')}\n")
+                    win.after(5000, poll)
+                    return
+                # 完成
+                model = o.get('model', {})
+                lines = [
+                    f"🎉 一键优化完成（耗时 {o.get('duration_sec', 0):.0f} 秒）\n",
+                    f"🧠 本地模型: {model.get('name', '?')}（{model.get('param_b', '?')} 档）\n",
+                    f"🛡 攻击拦截: {o.get('attack_before', 0)} → {o.get('attack_after', 0)} / {o.get('attack_total', 0)}\n",
+                    f"✅ 误伤基线: {o.get('fp_before', 0)} / {o.get('fp_total', 0)}\n",
+                    f"🔑 新增触发词: {len(o.get('new_keywords') or [])} 个\n",
+                ]
+                for kw in o.get('new_keywords') or []:
+                    lines.append(f"    + {kw}\n")
+                if o.get('skipped_words'):
+                    lines.append(f"⏭ 跳过（会误伤）: {len(o['skipped_words'])} 个\n")
+                    for s in o['skipped_words'][:10]:
+                        lines.append(f"    - {s}\n")
+                if o.get('error'):
+                    lines.append(f"❌ {o['error']}\n")
+                text.delete(1.0, tk.END)
+                text.insert(tk.END, "".join(lines))
+            except Exception as e:
+                win.after(5000, poll)
+        poll()
 
     def _run_self_test(self):
         """运行对抗自测，弹窗显示穿透报告。"""
