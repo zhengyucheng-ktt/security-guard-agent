@@ -1,12 +1,15 @@
 # -*- coding: utf-8 -*-
 """性能基准测试：量化安全网关的延迟损耗（Latency）
 说明：使用 keep-alive 长连接（线程本地连接池），反映业务侧真实接入效果
-（每次新建连接会产生 ~20ms TCP 握手开销，与网关本身无关）"""
-import json, io, sys, time, statistics, threading, http.client
+（每次新建连接会产生 ~20ms TCP 握手开销，与网关本身无关）
+注意：测试前会备份 system_config.json 到 system_config.test_backup.json 再临时放宽配置；
+若测试异常退出，guard 下次启动会自动用备份还原生产配置（防止测试配置污染）。"""
+import json, io, os, sys, time, statistics, threading, http.client, shutil
 
 BASE_HOST = "127.0.0.1"
 BASE_PORT = 8080
 CFG = "system_config.json"
+CFG_BACKUP = "system_config.test_backup.json"
 
 def load_cfg():
     return json.load(io.open(CFG, "r", encoding="utf-8"))
@@ -80,6 +83,8 @@ def main():
     print("===== 性能基准测试：安全网关延迟量化 =====")
     print("服务: http://%s:%d 当前时间: %s" % (BASE_HOST, BASE_PORT, time.strftime("%H:%M:%S")))
     orig = load_cfg()
+    # 修改前备份生产配置（异常退出时 guard 启动会自动还原）
+    shutil.copyfile(CFG, CFG_BACKUP)
     # 临时宽松配置：关闭去重/行为检测、放大限流，避免测试互相干扰
     cfg = dict(orig)
     cfg.update({"enable_duplicate_detection": False, "enable_behavior_analysis": False,
@@ -137,6 +142,8 @@ def main():
         report("并发放行", all_lat, [])
     finally:
         save_cfg(orig)
+        if os.path.exists(CFG_BACKUP):
+            os.remove(CFG_BACKUP)  # 正常恢复后删除备份
         time.sleep(1)
         print("\n配置已恢复原样")
 

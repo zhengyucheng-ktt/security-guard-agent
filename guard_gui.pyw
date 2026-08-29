@@ -210,7 +210,7 @@ class GuardConfigGUI:
         self.cloud_url_var = tk.StringVar(value="")
         self.cloud_model_var = tk.StringVar(value="")
         self.cloud_key_var = tk.StringVar(value="")
-        self.fail_policy_var = tk.StringVar(value="fallback")
+        self.fail_policy_var = tk.StringVar(value="fail-closed")
         # 差分隐私 / 行为分析 / 话术判断
         self.dp_eps_var = tk.StringVar(value="1.0")
         self.behavior_var = tk.BooleanVar(value=False)
@@ -397,7 +397,7 @@ class GuardConfigGUI:
             'cloud_judge_url': self.cloud_url_var.get().strip(),
             'cloud_judge_model': self.cloud_model_var.get().strip(),
             'cloud_judge_api_key': self.cloud_key_var.get().strip(),
-            'llm_judge_fail_policy': self.fail_policy_var.get().strip() or "fallback",
+            'llm_judge_fail_policy': self.fail_policy_var.get().strip() or "fail-closed",
             'dp_epsilon': float(self.dp_eps_var.get() or 1.0),
             'enable_behavior_analysis': self.behavior_var.get(),
             'enable_llm_style_judge': self.style_judge_var.get(),
@@ -471,7 +471,12 @@ class GuardConfigGUI:
         if 'cloud_judge_api_key' in cfg:
             self.cloud_key_var.set(cfg.get('cloud_judge_api_key') or '')
         if cfg.get('llm_judge_fail_policy'):
-            self.fail_policy_var.set(cfg['llm_judge_fail_policy'])
+            # 旧值兼容映射：fallback→fail-closed（原语义"无可用引擎时拦截"）、block→fail-closed、allow→fail-open
+            old = cfg['llm_judge_fail_policy']
+            mapping = {"fallback": "fail-closed", "block": "fail-closed", "allow": "fail-open",
+                       "fail-closed": "fail-closed", "fail-open": "fail-open"}
+            self.fail_policy_var.set(mapping.get(old, "fail-closed"))
+        self._update_fail_tip()
         if 'dp_epsilon' in cfg:
             self.dp_eps_var.set(str(cfg.get('dp_epsilon') or 1.0))
         if 'enable_behavior_analysis' in cfg:
@@ -1357,9 +1362,17 @@ class GuardConfigGUI:
         tk.Label(frame, text="云端 Key:", bg='white', font=("Microsoft YaHei", 10)).grid(row=19, column=0, sticky='w', pady=4)
         tk.Entry(frame, textvariable=self.cloud_key_var, width=24, show="*",
                  font=("Microsoft YaHei", 10)).grid(row=19, column=1, sticky='w', pady=4)
-        tk.Label(frame, text="失败策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=20, column=0, sticky='w', pady=4)
-        ttk.Combobox(frame, textvariable=self.fail_policy_var, values=["fallback", "allow", "block"],
-                     width=10, state='readonly').grid(row=20, column=1, sticky='w', pady=4)
+        tk.Label(frame, text="判定引擎故障策略:", bg='white', font=("Microsoft YaHei", 10)).grid(row=20, column=0, sticky='w', pady=4)
+        self.fail_policy_combo = ttk.Combobox(frame, textvariable=self.fail_policy_var,
+                                              values=["fail-closed", "fail-open"],
+                                              width=12, state='readonly')
+        self.fail_policy_combo.grid(row=20, column=1, sticky='w', pady=4)
+        self.fail_policy_combo.bind("<<ComboboxSelected>>", lambda e: self._update_fail_tip())
+        # 故障策略动态说明（选择即显示）
+        self.fail_tip_label = tk.Label(frame, text="", bg='#E3F2FD', fg='#0D47A1', justify='left',
+                                       font=("Microsoft YaHei", 9), padx=8, pady=4, wraplength=520)
+        self.fail_tip_label.grid(row=20, column=0, columnspan=2, sticky='we', pady=(0, 6))
+        self._update_fail_tip()
 
         # 差分隐私 / 行为分析 / 话术判断
         # 🔑 快捷配置云端审核模型（弹窗只需填 Key）
@@ -1454,6 +1467,16 @@ class GuardConfigGUI:
                       "▶ 适合：兼顾隐私与判定力的场景（推荐默认）",
         }
         self.mode_tip_label.config(text=tips.get(self.llm_mode_var.get(), ""))
+
+    def _update_fail_tip(self):
+        """按当前选择的判定引擎故障策略，动态显示含义。"""
+        tips = {
+            "fail-closed": "【故障拦截（推荐）】判定引擎（本地/云端）不可用时 → 直接拦截，宁严勿松。\n"
+                           "▶ 适合：安全优先场景——模型挂了宁可不响应，也不放行可疑内容",
+            "fail-open": "【故障放行】判定引擎（本地/云端）不可用时 → 直接放行，保证业务不中断。\n"
+                         "▶ 适合：可用性优先场景——宁可漏判，也不能让正常业务被模型故障卡住",
+        }
+        self.fail_tip_label.config(text=tips.get(self.fail_policy_var.get(), ""))
 
     # ---- 水印提取 ----
     def _create_watermark_tab(self):

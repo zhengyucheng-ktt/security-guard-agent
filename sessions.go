@@ -77,10 +77,23 @@ func updateSessionScore(sessionID string, delta int) (int, error) {
 	return newScore, nil
 }
 
+// goSafe 以安全方式启动后台 goroutine：内部 panic 被捕获并记录日志，
+// 防止单个 goroutine 崩溃导致整个服务进程退出。
+func goSafe(name string, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("💥 [%s] 后台任务 panic 已捕获（服务继续运行）: %v", name, r)
+			}
+		}()
+		fn()
+	}()
+}
+
 // 周期性清理：过期积分、空闲限流器；定期持久化会话积分
 func startCacheJanitor() {
-	go func() {
-		ticker := time.NewTicker(time.Minute)
+	goSafe("缓存清理", func() {
+		ticker := time.NewTicker(30 * time.Second) // 30 秒一轮：清理 + 持久化（kill -9 最多丢 30 秒积分）
 		for range ticker.C {
 			cacheMutex.Lock()
 			for sid, entry := range memoryCache {
@@ -149,8 +162,8 @@ func startCacheJanitor() {
 			persistSessions()    // 内存模式下持久化积分，重启不丢
 			persistReputation()  // 持久化账号信誉分
 		}
-	}()
-	log.Println("🧹 缓存清理任务已启动（每60秒清理过期积分与空闲限流器）")
+	})
+	log.Println("🧹 缓存清理任务已启动（每30秒清理过期积分并持久化）")
 }
 
 // ============================================================

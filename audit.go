@@ -222,11 +222,11 @@ func writeAuditLogSync(sessionID, userID, actionType, content, decision, riskLev
 }
 
 func startLogWorker() {
-	go func() {
+	goSafe("审计日志写入", func() {
 		for entry := range logChan {
 			writeAuditLogSync(entry.SessionID, entry.UserID, entry.ActionType, entry.Content, entry.Decision, entry.RiskLevel, entry.Reason, entry.AttackType, entry.Score, entry.LatencyMs, entry.LlmMs)
 		}
-	}()
+	})
 }
 
 // adminVerifyLogs 校验审计日志哈希链完整性（防篡改验证）

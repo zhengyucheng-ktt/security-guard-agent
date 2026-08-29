@@ -2,7 +2,7 @@
 """增强版变体测试：自动生成攻击变体（同义词/编码/空白/角色/谐音），走完整 guard 链路
 用法: python variant_test.py  → 本地模式
       python variant_test.py hybrid → 混合模式（需配置文件切到 hybrid）"""
-import json, io, sys, time, threading, http.client, base64, urllib.parse
+import json, io, sys, time, threading, http.client, base64, urllib.parse, uuid
 
 HOST, PORT = "127.0.0.1", 8080
 cfg = json.load(io.open("system_config.json", encoding="utf-8"))
@@ -93,7 +93,7 @@ blocked, n = 0, 0
 penetrated = []
 for i, (c, cat) in enumerate(all_samples):
     n += 1
-    ok, reason = guard("var-%d" % n, c)
+    ok, reason = guard("var-%s-%d" % (uuid.uuid4().hex[:6], n), c)
     if ok:
         blocked += 1
     else:

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """语义级攻击专项测试：角色扮演 / 间接请求 / 隐喻 / 社会工程"""
-import json, io, sys, time, threading, http.client
+import json, io, sys, time, threading, http.client, uuid
 
 HOST, PORT = "127.0.0.1", 8080
 cfg = json.load(io.open("system_config.json", encoding="utf-8"))
@@ -54,7 +54,7 @@ blocked, n = 0, 0
 penetrated = []
 for i, (cat, c) in enumerate(SAMPLES):
     n += 1
-    ok, reason = guard("sem-%d" % n, c)
+    ok, reason = guard("sem-%s-%d" % (uuid.uuid4().hex[:6], n), c)
     if ok:
         blocked += 1
     else:

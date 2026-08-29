@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
-"""误判测试：各种正常用户输入/操作，统计误拦截率"""
-import json, io, time, threading, http.client
+"""误判测试：各种正常用户输入/操作，统计误拦截率
+注意：测试前会备份 system_config.json 到 system_config.test_backup.json 再临时放宽配置；
+若测试异常退出，guard 下次启动会自动用备份还原生产配置（防止测试配置污染）。"""
+import json, io, os, time, threading, http.client, uuid
 
 HOST, PORT = "127.0.0.1", 8080
 cfg = json.load(io.open("system_config.json", encoding="utf-8"))
@@ -127,6 +129,9 @@ NORMAL = [
 def run():
     print("===== 误判测试：正常用户样本 =====")
     cfg0 = json.load(io.open("system_config.json", encoding="utf-8"))
+    # 修改前备份生产配置（异常退出时 guard 启动会自动还原）
+    import shutil
+    shutil.copyfile("system_config.json", "system_config.test_backup.json")
     tmp = dict(cfg0)
     tmp.update({"user_rate_limit": 100000, "ip_rate_limit": 100000,
                 "enable_reputation_score": False, "enable_behavior_analysis": False,
@@ -146,7 +151,7 @@ def run():
             else:
                 cat, content = item[0], item[1]
                 action, extra = "user_input", None
-            r = guard("fp-%d" % n, action, content, extra)
+            r = guard("fp-%s-%d" % (uuid.uuid4().hex[:6], n), action, content, extra)
             dec = r.get("decision", "?")
             reason = r.get("block_reason", "")[:38]
             if dec == "block":
@@ -158,6 +163,8 @@ def run():
     finally:
         with io.open("system_config.json", "w", encoding="utf-8") as f:
             json.dump(cfg0, f, ensure_ascii=False, indent=2)
+        if os.path.exists("system_config.test_backup.json"):
+            os.remove("system_config.test_backup.json")
         time.sleep(1)
     print("-" * 78)
     print("误拦截: %d/%d (%.0f%%)" % (blocked, n, blocked * 100.0 / n))
