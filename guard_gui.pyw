@@ -688,18 +688,31 @@ class GuardConfigGUI:
         # 自测与优化单独一行（避免与右侧说明/窗口宽度互相挤占）
         test_frame = tk.Frame(tab, bg='white')
         test_frame.pack(fill='x', pady=(0, 0))
-        self._btn(test_frame, "🛡 对抗自测", self._run_self_test, bg='#9C27B0').pack(side='left', padx=5)
-        self._btn(test_frame, "🧪 一键优化本地模型", self._run_optimize, bg='#FF6F00').pack(side='left', padx=5)
-        self._btn(test_frame, "📥 自定义样本", self._manage_custom_samples, bg='#00897B').pack(side='left', padx=5)
+        btn_selftest = self._btn(test_frame, "⚡ 规则回归", self._run_self_test, bg='#9C27B0')
+        btn_selftest.pack(side='left', padx=5)
+        ToolTip(btn_selftest, "快速体检（约1秒，不调用大模型）\n"
+                              "只测规则层：638 个对抗样本，关键词/正则/触发词能否拦住\n"
+                              "适合：改完规则后快速确认没破坏，日常随手跑")
+        btn_optimize = self._btn(test_frame, "🧪 智能调优", self._run_optimize, bg='#FF6F00')
+        btn_optimize.pack(side='left', padx=5)
+        ToolTip(btn_optimize, "深度调优（约5分钟，含大模型判定）\n"
+                              "完整链路：638 对抗样本走真实判定路径\n"
+                              "自动提取安全触发词（误伤安全阀）+ 合并自定义样本\n"
+                              "适合：换模型/业务样本变化时定期跑一次")
+        btn_custom = self._btn(test_frame, "📥 自定义样本", self._manage_custom_samples, bg='#00897B')
+        btn_custom.pack(side='left', padx=5)
+        ToolTip(btn_custom, "接入你自己的业务语料\n"
+                            "攻击样本 → 并入对抗测试（智能调优时自动合并）\n"
+                            "正常样本 → 并入误伤测试（防止优化误伤你的业务语句）")
         # 启动自检：确认一键优化按钮已创建（排查"看不到按钮"问题）
         print("[DEBUG] 一键优化按钮已创建 (规则管理页, _create_rules_tab)")
-        tk.Label(test_frame, text="自测=回归验证规则层；一键优化=按本地模型量级自动调触发词；自定义样本=加入你的业务语句",
+        tk.Label(test_frame, text="⚡规则回归=快速体检；🧪智能调优=深度优化；📥自定义样本=接入业务语料（鼠标悬停看说明）",
                  bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='left', padx=10)
 
     def _run_optimize(self):
         """一键优化本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
         win = tk.Toplevel(self.root)
-        win.title("🧪 一键优化本地模型")
+        win.title("🧪 智能调优（一键优化本地模型）")
         win.geometry("720x480")
         win.configure(bg='white')
         text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
@@ -883,7 +896,7 @@ class GuardConfigGUI:
     def _run_self_test(self):
         """运行对抗自测，弹窗显示穿透报告。"""
         win = tk.Toplevel(self.root)
-        win.title("🛡 对抗自测报告")
+        win.title("⚡ 规则回归（对抗自测）")
         win.geometry("680x440")
         win.configure(bg='white')
         text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
