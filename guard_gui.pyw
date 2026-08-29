@@ -710,13 +710,15 @@ class GuardConfigGUI:
                  bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='left', padx=10)
 
     def _run_optimize(self):
-        """智能调优本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
+        """智能调优本地模型：检测量级 → 三项测试 → 生成建议触发词（dry-run，管理员确认后落盘）"""
         win = tk.Toplevel(self.root)
         win.title("🧪 智能调优（本地模型自动化调优）")
-        win.geometry("720x480")
+        win.geometry("720x520")
         win.configure(bg='white')
         text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
         text.pack(fill='both', expand=True, padx=8, pady=(8, 4))
+        btn_row_apply = tk.Frame(win, bg='white')
+        btn_row_apply.pack(fill='x', padx=8, pady=(0, 6))
         text.insert(tk.END, "正在检测本地模型量级...\n")
 
         # 启动优化任务
@@ -752,23 +754,43 @@ class GuardConfigGUI:
                     return
                 # 完成
                 model = o.get('model', {})
+                new_kws = o.get('new_keywords') or []
                 lines = [
                     f"🎉 智能调优完成（耗时 {o.get('duration_sec', 0):.0f} 秒）\n",
                     f"🧠 本地模型: {model.get('name', '?')}（{model.get('param_b', '?')} 档）\n",
-                    f"🛡 攻击拦截: {o.get('attack_before', 0)} → {o.get('attack_after', 0)} / {o.get('attack_total', 0)}\n",
+                    f"🛡 攻击拦截: {o.get('attack_before', 0)} → {o.get('attack_after', 0)}（预计） / {o.get('attack_total', 0)}\n",
                     f"✅ 误伤基线: {o.get('fp_before', 0)} / {o.get('fp_total', 0)}\n",
-                    f"🔑 新增触发词: {len(o.get('new_keywords') or [])} 个\n",
+                    f"🔑 建议触发词（{len(new_kws)} 个，dry-run 未生效）:\n",
                 ]
-                for kw in o.get('new_keywords') or []:
+                for kw in new_kws:
                     lines.append(f"    + {kw}\n")
+                if not new_kws:
+                    lines.append("    （无新增建议——现有触发词已覆盖或候选会误伤）\n")
                 if o.get('skipped_words'):
                     lines.append(f"⏭ 跳过（会误伤）: {len(o['skipped_words'])} 个\n")
                     for s in o['skipped_words'][:10]:
                         lines.append(f"    - {s}\n")
                 if o.get('error'):
                     lines.append(f"❌ {o['error']}\n")
+                lines.append("\n⚠️ dry-run 模式：建议不会自动生效。确认无误后点下方「✅ 确认采纳」写入配置。\n")
                 text.delete(1.0, tk.END)
                 text.insert(tk.END, "".join(lines))
+                # 确认采纳按钮（仅当有建议且未采纳时显示）
+                if new_kws and not o.get('applied'):
+                    def do_apply():
+                        try:
+                            rr = requests.post(f"{API_BASE}/security/optimize/apply",
+                                               json={"job_id": job_id},
+                                               headers=admin_headers(True), timeout=10)
+                            d = rr.json()
+                            if d.get("status") == "ok":
+                                text.insert(tk.END, f"\n✅ 已确认采纳 {d.get('applied', 0)} 个触发词，写入配置并生效\n")
+                                self._append_log(f"🧪 已确认采纳 {d.get('applied', 0)} 个调优触发词")
+                            else:
+                                text.insert(tk.END, f"\n❌ 采纳失败: {d.get('error', rr.text[:100])}\n")
+                        except Exception as ex:
+                            text.insert(tk.END, f"\n❌ 采纳异常: {ex}\n")
+                    self._btn(btn_row_apply, "✅ 确认采纳（写入配置）", do_apply, bg='#4CAF50', width=20).pack(side='left', padx=5)
             except Exception as e:
                 win.after(5000, poll)
         poll()

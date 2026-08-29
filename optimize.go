@@ -115,12 +115,14 @@ type OptimizeResult struct {
 	FPBefore      int            `json:"fp_before"`      // 优化前误伤数
 	FPCandidates  int            `json:"fp_candidates"`  // 候选词引起的误伤数
 	KeywordCov    int            `json:"keyword_cov"`    // 触发词覆盖数
-	NewKeywords   []string       `json:"new_keywords"`
+	NewKeywords   []string       `json:"new_keywords"`   // 建议新增触发词（dry-run，未落盘）
 	SkippedWords  []string       `json:"skipped_words"`  // 因误伤/过短被跳过的候选
 	DurationSec   float64        `json:"duration_sec"`
 	Done          bool           `json:"done"`
 	Stage         string         `json:"stage,omitempty"`
 	Error         string         `json:"error,omitempty"`
+	DryRun        bool           `json:"dry_run"`        // true=仅生成建议不落盘（企业级默认），false=已确认采纳
+	Applied       bool           `json:"applied"`        // 建议是否已由管理员确认落盘
 }
 
 // 优化任务状态（异步：接口立即返回 job id，后台跑完，前端轮询）
@@ -178,6 +180,7 @@ func adminOptimizeLocalModel(c *gin.Context) {
 		log.Printf("✅ 优化(%s): 误伤基线 %d/%d", jobID, job.FPBefore, job.FPTotal)
 
 		// 第 4 步：逐候选验证（安全阀：引入误伤则回滚）
+		// 企业级 dry-run：只收集建议关键词，不自动写盘；由管理员确认后才落盘生效
 		added := 0
 		for _, kw := range candidates {
 			suspiciousMu.Lock()
@@ -193,21 +196,32 @@ func adminOptimizeLocalModel(c *gin.Context) {
 			}
 			job.NewKeywords = append(job.NewKeywords, kw)
 			added++
+			// 回滚测试用词：建议列表收集后恢复，不落盘（落盘由管理员确认接口执行）
+			suspiciousMu.Lock()
+			customSuspiciousKeywords = customSuspiciousKeywords[:len(customSuspiciousKeywords)-1]
+			suspiciousMu.Unlock()
 		}
-		if added > 0 {
-			if err := saveCustomSuspiciousKeywords(); err != nil {
-				log.Printf("⚠️ 优化(%s) 保存触发词失败: %v", jobID, err)
-			}
-			log.Printf("✅ 优化(%s): 新增 %d 个安全触发词", jobID, added)
-		}
+		job.DryRun = true
+		job.Applied = false
+		log.Printf("⏸ 优化(%s): 生成 %d 个建议触发词（dry-run，未落盘，需管理员确认）", jobID, added)
 
-		// 第 5 步：优化后攻击测试（验证提升）
+		// 第 5 步：优化后攻击测试（临时加入建议词测提升，测完回滚保持 dry-run）
+		for _, kw := range job.NewKeywords {
+			suspiciousMu.Lock()
+			customSuspiciousKeywords = append(customSuspiciousKeywords, kw)
+			suspiciousMu.Unlock()
+		}
 		job.AttackAfter = countAttackBlocked(runFullAttackJudge(nil))
+		for range job.NewKeywords {
+			suspiciousMu.Lock()
+			customSuspiciousKeywords = customSuspiciousKeywords[:len(customSuspiciousKeywords)-1]
+			suspiciousMu.Unlock()
+		}
 		job.FPCandidates = len(job.SkippedWords)
 		job.KeywordCov = len(customSuspiciousKeywords)
 		job.DurationSec = time.Since(t0).Seconds()
 		job.Done = true
-		log.Printf("🎉 优化(%s) 完成: 攻击 %d→%d, 误伤 %d, 新增 %d 词, 耗时 %.0fs",
+		log.Printf("🎉 优化(%s) 完成: 攻击 %d→%d(预计), 误伤 %d, 建议 %d 词(dry-run), 耗时 %.0fs",
 			jobID, job.AttackBefore, job.AttackAfter, job.FPBefore, added, job.DurationSec)
 	}()
 
@@ -225,6 +239,61 @@ func adminOptimizeStatus(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "done", "optimize": job})
+}
+
+// adminOptimizeApply 管理员确认采纳建议触发词（dry-run → 落盘生效）。
+// 企业级规则变更：调优只生成建议，由管理员审核后手动确认写入配置文件并热加载。
+func adminOptimizeApply(c *gin.Context) {
+	var req struct {
+		JobID string `json:"job_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.JobID == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid job_id"})
+		return
+	}
+	optimizeJobMu.Lock()
+	job, ok := optimizeJobs[req.JobID]
+	if !ok {
+		optimizeJobMu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"status": "error", "error": "job 不存在"})
+		return
+	}
+	if job.Applied {
+		optimizeJobMu.Unlock()
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "已采纳，无需重复执行"})
+		return
+	}
+	// 落盘建议词
+	added := 0
+	for _, kw := range job.NewKeywords {
+		suspiciousMu.Lock()
+		dup := false
+		for _, k := range customSuspiciousKeywords {
+			if k == kw {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			customSuspiciousKeywords = append(customSuspiciousKeywords, kw)
+			added++
+		}
+		suspiciousMu.Unlock()
+	}
+	optimizeJobMu.Unlock()
+	if added > 0 {
+		if err := saveCustomSuspiciousKeywords(); err != nil {
+			log.Printf("⚠️ 确认采纳保存失败: %v", err)
+			c.JSON(http.StatusOK, gin.H{"status": "error", "error": "保存失败: " + err.Error()})
+			return
+		}
+	}
+	optimizeJobMu.Lock()
+	job.Applied = true
+	job.DryRun = false
+	optimizeJobMu.Unlock()
+	log.Printf("✅ 管理员已确认采纳 %d 个建议触发词（job=%s）", added, req.JobID)
+	c.JSON(http.StatusOK, gin.H{"status": "ok", "applied": added, "message": "已写入配置文件并生效"})
 }
 
 // runFullAttackJudge 跑完整攻击判定（规则层 + LLM，走真实判定链路），返回穿透样本

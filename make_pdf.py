@@ -214,9 +214,9 @@ def blocks_toc():
         ("02", "背景与痛点", "LLM 应用面临哪些安全风险"),
         ("03", "产品定位与防线总览", "拦截恶意行为，正常对话零打扰"),
         ("04", "核心功能总览", "六大防线模块一览"),
-        ("05", "输入防线", "把住用户说的话：规则 + 混淆归一 + 多轮语境"),
-        ("06", "工具防线", "管住 AI 能做的事：白名单 + 参数校验 + 令牌"),
-        ("07", "输出防线", "护住出去的每一句话：脱敏 + 水印 + 差分隐私"),
+        ("05", "输入过滤", "Inbound Filtering：规则 + 混淆归一 + 多轮语境"),
+        ("06", "工具调用约束", "Tool Call Constraint：白名单 + 参数校验 + 令牌"),
+        ("07", "输出脱敏与溯源", "Output Sanitization：脱敏 + 水印 + 差分隐私"),
         ("08", "反刷评与账号风控", "去重 + 聚合限流 + 信誉分 + 风险积分"),
         ("09", "判定引擎", "本地 / 云端 / 混合三种模式自由切换"),
         ("10", "意图感知（thinking 检测）", "扫描模型显式输出的思考文本，识别危险意图"),
@@ -365,7 +365,7 @@ def blocks_input():
         ]),
     ]
 
-story += content_page("05 · 输入防线：把住用户说的话", "四层机制协同，识别并拦截恶意输入", blocks_input)
+story += content_page("05 · 输入过滤（Inbound Filtering）", "四层机制协同，识别并拦截恶意输入", blocks_input)
 
 # ===== 工具防线 =====
 def blocks_tool():
@@ -383,7 +383,7 @@ def blocks_tool():
         ]),
     ]
 
-story += content_page("06 · 工具防线：管住 AI 能做的事", "四步把关，高危操作层层设卡", blocks_tool)
+story += content_page("06 · 工具调用约束（Tool Call Constraint）", "四步把关，高危操作逐层校验", blocks_tool)
 
 # ===== 输出防线 =====
 def blocks_output():
@@ -393,9 +393,10 @@ def blocks_output():
             "示例：13212345678 → 132****5678，按角色策略（full / partial / minimal）分级",
         ]),
         Spacer(1, 4 * mm),
-        card("零宽字符水印（泄露可溯源）", [
+        card("零宽字符水印（防文本泄露溯源）", [
             "每份输出嵌入肉眼不可见的唯一身份标记",
-            "一旦内容外泄，提取水印即可定位到会话与用户",
+            "内容被复制/导出外泄时，提取水印可定位会话与用户",
+            "注：零宽字符在截图中会丢失（文本变像素），防截图需另加明水印",
         ]),
         Spacer(1, 4 * mm),
         card("差分隐私（可选）", [
@@ -404,7 +405,7 @@ def blocks_output():
         ]),
     ]
 
-story += content_page("07 · 输出防线：护住出去的每一句话", "脱敏 + 水印 + 差分隐私，三道保险", blocks_output)
+story += content_page("07 · 输出脱敏与溯源（Output Sanitization）", "脱敏 + 水印 + 差分隐私，三层防护", blocks_output)
 
 # ===== 反刷评 =====
 def blocks_anti():
@@ -672,8 +673,8 @@ def blocks_opt():
             "① 检测模型量级：Ollama 读模型大小 → 7b 保守策略 / 14b+ 激进策略",
             "② 攻击拦截测试：638 对抗样本走完整判定链路，找出真实穿透",
             "③ 误伤基线：82 正常样本，确保优化不误伤",
-            "④ 提取候选关键词：从穿透样本提取 → 逐个过误伤测试",
-            "⑤ 安全阀采纳：引入误伤则回滚；安全词写入配置文件可回滚",
+            "④ 生成建议关键词：穿透样本提取 → 逐个过误伤测试（dry-run，不落盘）",
+            "⑤ 管理员确认落盘：输出差异报告，人工确认后写入配置生效（沙箱验证→人工审核→确认发布）",
         ]),
         Spacer(1, 4 * mm),
         card("自定义样本（接入业务语料）", [
@@ -690,6 +691,34 @@ def blocks_opt():
     ]
 
 story += content_page("18 · 持续进化", "智能调优 + 自定义样本 + 运行加固", blocks_opt, pagebreak=False)
+
+# ===== 19 硬件配置阶梯 =====
+def blocks_hw():
+    rows = [
+        ("qwen2.5:7b（默认）", "≥8GB 显存", "RTX 4060 / 3060 / 3070 等消费级", "纯净模式 ≥92% 拦截 · 判定 ~0.8s"),
+        ("qwen2.5:14b", "≥24GB 显存", "RTX 4090 / A10 / A100 40G", "标准模式 ≥98% 拦截 · 判定 ~1.5-3s"),
+        ("qwen2.5:32b", "≥32GB 显存", "A100 / L40S / 双卡 4090", "语义类攻击进一步提升"),
+        ("70b+ 旗舰", "≥48GB 或多卡", "A100 80G × 2 / 服务器级", "最高判定力，适合强对抗场景"),
+    ]
+    data = [[Paragraph("<font name='SIMHEI' color='#FFFFFF'>模型档位</font>", S["small"]),
+             Paragraph("<font name='SIMHEI' color='#FFFFFF'>显存要求</font>", S["small"]),
+             Paragraph("<font name='SIMHEI' color='#FFFFFF'>推荐显卡</font>", S["small"]),
+             Paragraph("<font name='SIMHEI' color='#FFFFFF'>预期表现</font>", S["small"])]]
+    for r in rows:
+        data.append([Paragraph(r[0], S["body_b"]), Paragraph(r[1], S["body_b"]),
+                     Paragraph(r[2], S["body_b"]), Paragraph(r[3], S["body_b"])])
+    t = Table(data, colWidths=[36 * mm, 30 * mm, 52 * mm, 52 * mm])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), NAVY2),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [white, LIGHT]),
+        ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8), ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    return [t, Spacer(1, 5 * mm),
+            Paragraph("低配可选 3b（≥4GB）；无显卡可用 CPU 推理（判定 ~5-10s，仅测试用）。推荐 7b 起步，强对抗场景用云端/混合。", S["small"])]
+
+story += content_page("19 · 部署硬件参考", "本地模型档位与显卡配置阶梯（TCO 决策）", blocks_hw, pagebreak=False)
 
 # ===== 封底 =====
 story.append(NextPageTemplate("back"))
