@@ -1172,7 +1172,16 @@ func guardHandler(c *gin.Context) {
 			decision = "block"
 			riskLevel = "high"
 		} else if decision == "allow" {
-			delta = SCORE_NORMAL
+			// ★★★ 涉黄涉政违规检测：命中即拦截 ★★★
+			if vRisk, vReason := checkViolation(req.Content); vRisk {
+				blockReason = vReason
+				delta = SCORE_SENSITIVE
+				decision = "block"
+				riskLevel = "high"
+				log.Printf("🛑 输入违规拦截: %s", vReason)
+			} else {
+				delta = SCORE_NORMAL
+			}
 		}
 	case "tool_call":
     // ★★★ 第一层：工具白名单检测（管理员显式授权优先于黑名单） ★★★
@@ -1273,6 +1282,25 @@ func guardHandler(c *gin.Context) {
 		if req.OutputContent == "" {
 			c.JSON(http.StatusOK, GuardResponse{Decision: "allow", RiskLevel: "low", SafeOutput: ""})
 			return
+		}
+		// ★★★ 涉黄涉政检测：输出内容违规 → 停止输出并报错 ★★★
+		if risk, reason := checkViolation(req.OutputContent); risk {
+			log.Printf("🛑 输出违规拦截: %s", reason)
+			writeAuditLog(req.SessionID, req.UserID, "output", req.OutputContent, "block", "high", "输出内容包含违规信息: "+reason, classifyAttack(reason), 0, int(time.Since(guardStart).Milliseconds()), int(llmMs))
+			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "输出内容包含违规信息，已停止输出: " + reason, SafeOutput: "", LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
+			return
+		}
+		// 可疑输出触发大模型判定（语义级涉政暴恐色情兜底）
+		if isSuspicious(req.OutputContent) {
+			t0 := time.Now()
+			hasRisk, _, reason := judgeByOllama(req.OutputContent)
+			llmMs += time.Since(t0).Milliseconds()
+			if hasRisk {
+				log.Printf("🤖 输出风险拦截: %s", reason)
+				writeAuditLog(req.SessionID, req.UserID, "output", req.OutputContent, "block", "high", "大模型判断输出含违规: "+reason, classifyAttack(reason), 0, int(time.Since(guardStart).Milliseconds()), int(llmMs))
+				c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "输出内容包含违规信息，已停止输出: " + reason, SafeOutput: "", LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
+				return
+			}
 		}
 		safe := desensitizeContent(req.OutputContent, req.UserID)
 		// 差分隐私：开启时对统计数字加入 Laplace 噪声（仅建议聚合统计输出启用）
