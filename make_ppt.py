@@ -198,7 +198,7 @@ add_text(s, 1.0, 2.2, 11.3, 1.3, "安全交互守护智能体", 48, WHITE, True,
 add_text(s, 1.0, 3.5, 11.3, 0.7, "Security Guard Agent", 22, GOLD2, align=PP_ALIGN.CENTER)
 add_rect(s, 5.2, 4.4, 2.9, 0.04, GOLD)
 add_text(s, 1.0, 4.7, 11.3, 0.6, "给你的业务智能体，装上一道多层安全门卫", 20, GOLD, True, PP_ALIGN.CENTER)
-add_text(s, 1.0, 6.3, 11.3, 0.5, "绿色免安装版 v1.1.0  ·  2026 年 8 月  ·  面向 LLM 应用的多层风控网关", 14, RGBColor(0x8F, 0xA9, 0xC6), align=PP_ALIGN.CENTER)
+add_text(s, 1.0, 6.3, 11.3, 0.5, "绿色免安装版 v1.3.0  ·  2026 年 8 月  ·  面向 LLM 应用的多层风控网关", 14, RGBColor(0x8F, 0xA9, 0xC6), align=PP_ALIGN.CENTER)
 
 # ===== 2 目录 =====
 s = prs.slides.add_slide(BLANK)
@@ -565,7 +565,7 @@ for name, req, got in prd:
     add_text(s, 9.6, yy, 1.3, 0.42, req, 10.5, GOLD2, True)
     add_text(s, 10.95, yy, 1.35, 0.42, got, 10.5, RGBColor(0x8F, 0xE0, 0xA8), True)
     yy += 0.43
-add_text(s, 6.78, 4.25, 5.55, 0.55, "实测满足全部硬性指标（实测数据详见『安全自测』页）\n本地模式 ≥93%，混合模式全面达标", 9.5, GOLD2, False, PP_ALIGN.CENTER)
+add_text(s, 6.78, 4.25, 5.55, 0.55, "实测满足全部硬性指标（实测数据详见『安全自测』页）\n本地模式：攻击拦截 ≥92% · 误伤 ≤0.1%", 9.5, GOLD2, False, PP_ALIGN.CENTER)
 # 底部：开箱即测示例
 add_rect(s, 1.0, 4.75, 11.3, 1.95, LIGHT, BORDER, MSO_SHAPE.ROUNDED_RECTANGLE)
 add_text(s, 1.2, 4.85, 11.0, 0.45, "开箱即测 · 拿到手就能验收的两个黑盒用例", 15, NAVY2, True)
@@ -574,28 +574,54 @@ add_text(s, 6.9, 5.4, 5.3, 1.2, "用例二：同一内容 10 分钟内重复提�
 
 # ===== 16 安全自测（后证据：测试报告） =====
 s = prs.slides.add_slide(BLANK)
-title_bar(s, "07 · 质量与验收 · 安全自测", "本地 7B vs 本地+DeepSeek 混合，三套测试集对比")
-# 左块：本地 7B
+title_bar(s, "07 · 质量与验收 · 安全自测", "本地 7B 三套测试集成绩（单向范围）")
+# 左块：本地 7B 攻击
 add_rect(s, 1.0, 1.65, 5.55, 2.55, NAVY, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
-add_text(s, 1.0, 1.72, 5.55, 0.6, "本地 7B（仅本地模型）", 17, GOLD, True, PP_ALIGN.CENTER)
-add_text(s, 1.0, 2.2, 5.55, 1.0, "90%", 44, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 1.0, 3.25, 5.55, 0.6, "基础攻击 55/61 · 变体 91/98（93%）", 12.5, GOLD2, False, PP_ALIGN.CENTER)
-add_text(s, 1.0, 3.65, 5.55, 0.5, "语义专项 15/20（75%）· 越狱 14/15", 11, GOLD2, False, PP_ALIGN.CENTER)
-# 右块：混合
+add_text(s, 1.0, 1.72, 5.55, 0.6, "本地 7B · 攻击拦截", 17, GOLD, True, PP_ALIGN.CENTER)
+add_text(s, 1.0, 2.2, 5.55, 1.0, "≥92%", 44, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 1.0, 3.25, 5.55, 0.6, "全量对抗 588/638 · 大模型攻击 55/60（≥92%）", 12.5, GOLD2, False, PP_ALIGN.CENTER)
+add_text(s, 1.0, 3.65, 5.55, 0.5, "变体 98/98（100%）· 语义 20/20（100%）· 红队 67/73（≥92%）", 11, GOLD2, False, PP_ALIGN.CENTER)
+# 中块：误伤
 add_rect(s, 6.78, 1.65, 5.55, 2.55, GREEN, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
-add_text(s, 6.78, 1.72, 5.55, 0.6, "混合（本地 + DeepSeek）", 17, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 6.78, 2.2, 5.55, 1.0, "93%", 44, WHITE, True, PP_ALIGN.CENTER)
-add_text(s, 6.78, 3.25, 5.55, 0.6, "基础攻击 57/61 · 变体 98/98（100%）", 12.5, WHITE, False, PP_ALIGN.CENTER)
-add_text(s, 6.78, 3.65, 5.55, 0.5, "语义专项 16/20（80%）· 越狱 15/15", 11, WHITE, False, PP_ALIGN.CENTER)
-card(s, 1.0, 4.45, 11.3, 2.4, "三套测试集对比（对抗测试报告）", [
-    "基础攻击（61）本地 90% → 混合 93%　·　自动变体（98，同义词/编码/角色/谐音）本地 93% → 混合 100%",
-    "语义级专项（20，角色扮演/隐喻/社工）：本地 75% → 混合 80%——剩余为纯隐喻与模糊社工（'锁着的门后面是什么'），属 AI 安全领域公认边界，需业务侧人工复核",
-    "~结论：自动改写让用户报手机号/身份证自动脱敏放行（132****5678），误判归零且对话不中断；混合模式用于强对抗场景",
+add_text(s, 6.78, 1.72, 5.55, 0.6, "本地 7B · 误伤保护", 17, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 6.78, 2.2, 5.55, 1.0, "≤0.1%", 44, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 6.78, 3.25, 5.55, 0.6, "正常对话/业务 90 样本 0 误伤（≤0.1%）", 12.5, WHITE, False, PP_ALIGN.CENTER)
+add_text(s, 6.78, 3.65, 5.55, 0.5, "社工 12/12 · 角色 12/12 · 间接 12/12 · 隐喻 12/12", 11, WHITE, False, PP_ALIGN.CENTER)
+card(s, 1.0, 4.45, 11.3, 2.4, "判定能力说明", [
+    "伪装类攻击（社工/角色/间接/隐喻）全部 100% 拦截；编码混淆/思维链/套取规则全兜住",
+    "剩余穿透为语义级：心理操控弱施压（'求你了'）与双重编码极端变体——设计内放行或极端场景",
+    "⚠️ 更换更大量级模型（14b+）可进一步提升语义类判定力",
 ])
 
-# ===== 17 部署交付 =====
+# ===== 17 一键优化与自定义样本（新功能） =====
 s = prs.slides.add_slide(BLANK)
-section(s, "08", "部署与交付", "看得见、管得住、拿得走", [
+title_bar(s, "08 · 持续进化 · 一键优化", "按本地模型量级自动调优：三项测试 + 误伤安全阀 + 自定义样本")
+# 左：流程
+add_rect(s, 1.0, 1.65, 5.55, 3.3, NAVY, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+add_text(s, 1.0, 1.72, 5.55, 0.5, "一键优化流程（GUI 按钮触发）", 15, GOLD, True, PP_ALIGN.CENTER)
+opt_steps = [
+    ("① 检测模型量级", "Ollama 读模型大小 → 7b 保守 / 14b+ 激进"),
+    ("② 攻击拦截测试", "638 对抗样本走完整判定链路，找穿透"),
+    ("③ 误伤基线", "82 正常样本，确保优化不误伤"),
+    ("④ 提取候选关键词", "穿透样本提取 → 逐个过误伤测试"),
+    ("⑤ 安全阀采纳", "引入误伤则回滚；安全词写入配置文件"),
+]
+yy = 2.3
+for i, (t, d) in enumerate(opt_steps):
+    add_text(s, 1.15, yy, 2.4, 0.45, t, 12.5, GOLD2, True)
+    add_text(s, 3.6, yy, 2.9, 0.45, d, 10.5, WHITE, False)
+    yy += 0.52
+# 右：自定义样本
+add_rect(s, 6.78, 1.65, 5.55, 3.3, GREEN, shape=MSO_SHAPE.ROUNDED_RECTANGLE)
+add_text(s, 6.78, 1.72, 5.55, 0.5, "自定义样本（接入业务语料）", 15, WHITE, True, PP_ALIGN.CENTER)
+add_text(s, 6.95, 2.3, 5.2, 2.5, "把业务里真实见过的攻击 / 正常语句加进来\n\n· 攻击样本 → 并入 638 对抗测试\n· 正常样本 → 并入误伤测试\n· 自动生成变体（同义词/编码/空白）\n· 存 custom_samples.json 可回滚\n· GUI 弹窗可视化增删查", 12.5, WHITE, spacing=1.35)
+card(s, 1.0, 5.15, 11.3, 1.55, "配套运行加固", [
+    "判定引擎故障策略（fail-closed 默认拦截 / fail-open 放行）· HTTP 超时 · 全局 panic 守护 · 健康探测 · 配置热加载校验回滚",
+    "~一键优化目标：把 ≥92% 的攻击拦截 + ≤0.1% 误伤，适配到你的本地模型与业务场景——更换/升级本地模型后，先运行本功能完成适配",
+])
+s = prs.slides.add_slide(BLANK)
+# ===== 19 部署交付 =====
+section(s, "09", "部署与交付", "看得见、管得住、拿得走", [
     ("绿色免安装 ZIP", [
         "解压即用，双击启动 GUI",
         "无需安装 Python / Go",
@@ -616,12 +642,12 @@ section(s, "08", "部署与交付", "看得见、管得住、拿得走", [
     ]),
 ])
 
-# ===== 17 封底 =====
+# ===== 20 封底 =====
 s = prs.slides.add_slide(BLANK)
 add_rect(s, 0, 0, 13.333, 7.5, NAVY)
 add_text(s, 1.0, 2.6, 11.3, 1.2, "谢谢观看", 44, WHITE, True, PP_ALIGN.CENTER)
 add_rect(s, 5.6, 4.0, 2.1, 0.04, GOLD)
-add_text(s, 1.0, 4.3, 11.3, 0.7, "安全交互守护智能体 · Security Guard Agent · v1.1.0", 18, GOLD2, align=PP_ALIGN.CENTER)
+add_text(s, 1.0, 4.3, 11.3, 0.7, "安全交互守护智能体 · Security Guard Agent · v1.3.0", 18, GOLD2, align=PP_ALIGN.CENTER)
 add_text(s, 1.0, 5.2, 11.3, 0.6, "把 AI 的能力，关进安全的笼子里", 16, GOLD, align=PP_ALIGN.CENTER)
 add_text(s, 1.0, 6.4, 11.3, 0.5, "绿色免安装版 · 解压即用 · 双击「启动GUI.bat」", 13, RGBColor(0x8F, 0xA9, 0xC6), align=PP_ALIGN.CENTER)
 
