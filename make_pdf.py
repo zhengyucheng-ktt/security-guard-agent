@@ -201,7 +201,7 @@ story.append(Spacer(1, 4 * mm))
 story.append(Paragraph("Security Guard Agent", S["cover_sub"]))
 story.append(Spacer(1, 12 * mm))
 story.append(HRFlowable(width="38%", thickness=2.5, color=GOLD, spaceAfter=12 * mm))
-story.append(Paragraph("给你的业务智能体，装上一道多层安全门卫", S["cover_line1"]))
+story.append(Paragraph("面向 LLM 应用的多层风控网关：策略执行点 + 安全边界 + 可观测性", S["cover_line1"]))
 story.append(Spacer(1, 58 * mm))
 story.append(Paragraph("绿色免安装版 v1.3.0  ·  2026 年 8 月  ·  面向 LLM 应用的多层风控网关", S["cover_foot"]))
 story.append(NextPageTemplate("body"))
@@ -212,7 +212,7 @@ def blocks_toc():
     toc_items = [
         ("01", "快速开始", "三步用起来：解压 → 启动 → 接入"),
         ("02", "背景与痛点", "LLM 应用面临哪些安全风险"),
-        ("03", "产品定位与防线总览", "守护智能体，而不是限制智能体"),
+        ("03", "产品定位与防线总览", "拦截恶意行为，正常对话零打扰"),
         ("04", "核心功能总览", "六大防线模块一览"),
         ("05", "输入防线", "把住用户说的话：规则 + 混淆归一 + 多轮语境"),
         ("06", "工具防线", "管住 AI 能做的事：白名单 + 参数校验 + 令牌"),
@@ -316,7 +316,7 @@ def blocks_pos():
         Paragraph("每一层防线独立可开关、可配置，按你的业务风险等级灵活组合。", S["small"]),
     ]
 
-story += content_page("03 · 产品定位与防线总览", "一句话：守护智能体，而不是限制智能体", blocks_pos)
+story += content_page("03 · 产品定位与防线总览", "多层风控网关：输入 / 工具 / 输出 全链路防护", blocks_pos)
 
 # ===== 核心功能总览 =====
 def blocks_overview():
@@ -360,7 +360,8 @@ def blocks_input():
         Spacer(1, 4 * mm),
         card("多轮渐进式注入防御", [
             "铺垫词累积'会话语境分' → 达标后升级审查 → 敏感请求联动拦截",
-            "低风险内容自动改写（可选）：手机号等 PII 先脱敏再放行对话",
+            "低风险内容自动改写（可选，仅 chat 场景）：手机号等 PII 先脱敏再放行对话",
+            "注意：涉及 tool_call 时工具参数用原文（original_input），避免脱敏破坏业务参数完整性",
         ]),
     ]
 
@@ -433,7 +434,7 @@ def blocks_judge():
          Paragraph("金融 / 医疗 / 政务等敏感行业、内网离线", S["body_b"])],
         [Paragraph("云端 cloud", S["body_b"]), Paragraph("OpenAI 兼容云端 API，判定能力最强", S["body_b"]),
          Paragraph("判定力优先、数据敏感度低的业务", S["body_b"])],
-        [Paragraph("混合 hybrid", S["body_b"]), Paragraph("本地初筛 + 云端终审，双保险", S["body_b"]),
+        [Paragraph("混合 hybrid", S["body_b"]), Paragraph("本地初筛 + 云端终审", S["body_b"]),
          Paragraph("兼顾隐私与判定力（推荐默认）", S["body_b"])],
     ]
     mode_t = Table(mode_rows, colWidths=[34 * mm, 74 * mm, 62 * mm])
@@ -496,7 +497,7 @@ def blocks_audit():
         ]),
     ]
 
-story += content_page("11 · 审计与溯源：全程留痕、可校验", "日志 100% 可溯源，改动任何一条都能被发现", blocks_audit)
+story += content_page("11 · 审计与溯源：日志可溯源、可校验", "改动任何一条日志都能被校验发现", blocks_audit)
 
 # ===== 业务接入 =====
 def blocks_sdk():
@@ -512,12 +513,12 @@ def blocks_sdk():
         card("黑箱 SDK（推荐非技术用户）", [
             "输入审核 → 大模型 → 工具防护 → 输出脱敏水印，自动完成",
             "拦截时抛出 GuardBlocked，原因可直接展示给用户",
-            "连 session / user 标识都不用管，SDK 自动处理",
+            "session / user 标识自动管理；多实例部署需启用 Redis 会话共享",
         ]),
         Spacer(1, 4 * mm),
         code,
         Spacer(1, 4 * mm),
-        Paragraph("标准 API 同样开放：user_input / tool_call / tool_result / output 四个环节可精细控制。", S["small"]),
+        Paragraph("标准 API 同样开放：user_input / tool_call / tool_result / output 四个环节可精细控制。多实例/分布式下，SDK 自动 session 需启用 Redis 共享；标准 API 建议业务侧主动传 x-session-id 保证一致性。", S["small"]),
     ]
 
 story += content_page("12 · 业务接入：几行代码搞定", "不懂内部机制也能接入 —— 黑箱 SDK", blocks_sdk)
@@ -649,13 +650,13 @@ def blocks_qa():
             "全量对抗 638 个：拦截 ≥588（≥92%）——伪装类（社工/角色/间接/隐喻）全部 100%，编码混淆/思维链/套取规则全兜住",
             "大模型攻击 60 个：≥55/60（≥92%）· 自动变体 98/98（100%）· 语义级 20/20（100%）· 红队 73 个 ≥67/73（≥92%）",
             "剩余穿透为语义级：心理操控弱施压（'求你了'）与双重编码极端变体——设计内放行或极端场景，规则层已无可优化空间",
-            "正常对话/业务抽测 90 样本 0 误伤——自动改写让用户报手机号/身份证自动脱敏放行（132****5678）；POC 阶段误伤率预估 <1%，正式版目标 ≤0.1%（需 3000+ 样本持续验证）",
+            "正常对话/业务抽测 82 样本 0 误伤——自动改写让用户报手机号/身份证自动脱敏放行（132****5678）；POC 阶段误伤率预估 <1%，正式版目标 ≤0.1%（需 3000+ 样本持续验证）",
             "⚠️ 更换更大量级模型（14b+）可进一步提升语义类判定力",
         ]),
         Spacer(1, 4 * mm),
         card("PRD 核心验收标准（按模式拆分）", [
             "越狱 / 高危注入识别率：标准模式（云端/14B+）≥98% · 纯净模式（本地 7B）≥92%　·　高危工具 100%：12/12 ✅",
-            "误拦截率 ≤1%：抽测 90 样本 0 误伤 ✅　·　多轮诱导 ≥95%：5 轮实测联动拦截 ✅　·　日志 100% 可校验（防篡改；防删除需外部备份）✅",
+            "误拦截率 ≤1%：抽测 82 样本 0 误伤 ✅　·　多轮诱导 ≥95%：5 轮实测联动拦截 ✅　·　日志 100% 可校验（防篡改；防删除需外部备份）✅",
             "运行加固：fail-closed 故障拦截 · HTTP 超时 · 全局 panic 守护 · 健康探测 · 配置热加载校验回滚",
         ]),
     ]
@@ -699,7 +700,7 @@ story.append(Spacer(1, 6 * mm))
 story.append(HRFlowable(width="30%", thickness=2, color=GOLD, spaceAfter=10 * mm))
 story.append(Paragraph("安全交互守护智能体 · Security Guard Agent · v1.3.0", S["b_foot"]))
 story.append(Spacer(1, 3 * mm))
-story.append(Paragraph("把 AI 的能力，关进安全的笼子里", S["b_foot"]))
+story.append(Paragraph("多层风控网关 · 每层独立可开关 · 全程可观测", S["b_foot"]))
 story.append(Spacer(1, 42 * mm))
 story.append(Paragraph("绿色免安装版 · 解压即用 · 双击「启动GUI.bat」", S["cover_foot"]))
 

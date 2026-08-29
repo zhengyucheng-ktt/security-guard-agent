@@ -250,7 +250,8 @@ type GuardResponse struct {
 	CurrentScore  int    `json:"current_score,omitempty"`
 	SessionStatus string `json:"session_status,omitempty"`
 	ToolToken     string `json:"tool_token,omitempty"`     // 工具调用授权令牌（tool_call 放行时返回）
-	RewrittenInput string `json:"rewritten_input,omitempty"` // 低风险自动改写后的输入（业务可用其继续对话）
+	RewrittenInput string `json:"rewritten_input,omitempty"` // 低风险自动改写后的输入（闲聊展示用）
+	OriginalInput string `json:"original_input,omitempty"`   // 改写前的原文（工具调用/参数传递用，避免 PII 脱敏破坏业务参数）
 	LatencyMs     int    `json:"latency_ms,omitempty"`     // 本次请求总耗时（毫秒，性能可观测）
 	LlmMs         int    `json:"llm_ms,omitempty"`         // 大模型判断耗时（毫秒，判定引擎开销）
 }
@@ -1172,6 +1173,7 @@ func guardHandler(c *gin.Context) {
 	if req.ActionType == "user_input" && req.Content != "" && cfg.EnableAutoRewrite {
 		if rewritten := rewriteContent(req.Content); rewritten != req.Content {
 			resp.RewrittenInput = rewritten
+			resp.OriginalInput = originalContent // 工具调用/参数传递用原文，避免脱敏破坏业务参数
 			req.Content = rewritten
 			log.Printf("✏️ 低风险内容已自动改写: session=%s", req.SessionID)
 		}

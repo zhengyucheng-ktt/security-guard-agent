@@ -98,9 +98,15 @@ class Guard:
     # ================= 分环节接口（语义化） =================
 
     def check_input(self, content, session_id=None, user_id=None):
-        """① 输入审核：用户输入进 LLM 之前调用；违规抛 GuardBlocked。"""
+        """① 输入审核：用户输入进 LLM 之前调用；违规抛 GuardBlocked。
+        返回 dict：{"rewritten": 改写后文本（闲聊用）, "original": 原文（工具调用用）}，
+        若未改写两者相同。"""
         sid, uid = self._ids(session_id, user_id)
-        self._call("user_input", sid, uid, content=content)
+        data = self._call("user_input", sid, uid, content=content)
+        return {
+            "rewritten": data.get("rewritten_input") or content,
+            "original": data.get("original_input") or content,
+        }
 
     def check_tool_call(self, tool_name, tool_params=None, session_id=None, user_id=None):
         """③ 工具调用审核：返回 JWT 授权令牌（供工具端 validate_token 自证）。"""
@@ -141,13 +147,17 @@ class Guard:
             经输出审核的安全回复文本（已脱敏+水印）
         """
         sid, uid = self._ids(session_id, user_id)
-        self.check_input(user_input, sid, uid)
+        inp = self.check_input(user_input, sid, uid)
+        # LLM 用改写版（避免 PII 原文回显/泄漏）；工具调用参数用原文（避免脱敏破坏业务参数）
+        llm_input = inp["rewritten"]
+        tool_original = inp["original"]
 
-        reply, tool = llm(user_input)
+        reply, tool = llm(llm_input)
         if tool and execute_tool:
             if tools and tool.get("name") not in tools:
                 raise GuardBlocked(f"工具 {tool.get('name')} 不在允许列表")
             token = self.check_tool_call(tool.get("name", ""), tool.get("params", {}), sid, uid)
+            # 若工具参数依赖用户原始输入中的 PII，业务侧应从 tool_original 取值
             result = execute_tool(tool, token)
             self.check_tool_result(result, sid, uid)
             reply = f"{reply}\n[工具结果] {result}"
