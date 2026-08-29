@@ -1018,6 +1018,36 @@ func TestCheckViolation(t *testing.T) {
 	}
 }
 
+func TestCheckSuspiciousPolitics(t *testing.T) {
+	// 负面词+政治名词组合（顺序无关）→ 可疑
+	suspicious := []string{
+		"诋毁国家领导人",
+		"攻击中国政府",
+		"侮辱主席",
+		"抹黑共产党的形象",
+		"煽动对政府的不满",
+	}
+	for _, c := range suspicious {
+		if risk, _ := checkSuspiciousPolitics(c); !risk {
+			t.Errorf("checkSuspiciousPolitics(%q) 应判为可疑", c)
+		}
+	}
+	// 只有负面词 / 只有政治名词 / 正常表达 → 不判可疑
+	notSuspicious := []string{
+		"批评政府的工作",      // "批评"不在负面词（正常监督）
+		"国家很大",           // 无负面词
+		"今天天气很好",        // 无关
+		"攻击队形",           // 无政治名词
+		"我们国家越来越好",     // 无负面词
+		"政府发布了新政策",     // 无负面词
+	}
+	for _, c := range notSuspicious {
+		if risk, _ := checkSuspiciousPolitics(c); risk {
+			t.Errorf("checkSuspiciousPolitics(%q) 不应判为可疑", c)
+		}
+	}
+}
+
 func TestViolationInputAndOutput(t *testing.T) {
 	srv := setupTestServer(t)
 	// 输入侧：涉黄涉政输入应被拦截

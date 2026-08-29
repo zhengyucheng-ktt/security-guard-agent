@@ -1172,13 +1172,28 @@ func guardHandler(c *gin.Context) {
 			decision = "block"
 			riskLevel = "high"
 		} else if decision == "allow" {
-			// ★★★ 涉黄涉政违规检测：命中即拦截 ★★★
+			// ★★★ 涉黄涉政违规检测 ★★★
 			if vRisk, vReason := checkViolation(req.Content); vRisk {
+				// 明显违规：直接拦截
 				blockReason = vReason
 				delta = SCORE_SENSITIVE
 				decision = "block"
 				riskLevel = "high"
 				log.Printf("🛑 输入违规拦截: %s", vReason)
+			} else if pRisk, pReason := checkSuspiciousPolitics(req.Content); pRisk {
+				// 负面词+政治名词组合（疑似涉政）：触发大模型判定，避免误伤正常讨论
+				t0 := time.Now()
+				hasRisk, _, reason := judgeByOllama(req.Content)
+				llmMs += time.Since(t0).Milliseconds()
+				if hasRisk {
+					blockReason = "疑似涉政内容: " + reason
+					delta = SCORE_SENSITIVE
+					decision = "block"
+					riskLevel = "high"
+					log.Printf("🤖 涉政判定拦截: %s（%s）", reason, pReason)
+				} else {
+					delta = SCORE_NORMAL
+				}
 			} else {
 				delta = SCORE_NORMAL
 			}
@@ -1290,8 +1305,8 @@ func guardHandler(c *gin.Context) {
 			c.JSON(http.StatusOK, GuardResponse{Decision: "block", RiskLevel: "high", BlockReason: "输出内容包含违规信息，已停止输出: " + reason, SafeOutput: "", LatencyMs: int(time.Since(guardStart).Milliseconds()), LlmMs: int(llmMs)})
 			return
 		}
-		// 可疑输出触发大模型判定（语义级涉政暴恐色情兜底）
-		if isSuspicious(req.OutputContent) {
+		// 可疑输出触发大模型判定（语义级涉政暴恐色情兜底，含负面词+政治名词组合）
+		if isSuspicious(req.OutputContent) || func() bool { p, _ := checkSuspiciousPolitics(req.OutputContent); return p }() {
 			t0 := time.Now()
 			hasRisk, _, reason := judgeByOllama(req.OutputContent)
 			llmMs += time.Since(t0).Milliseconds()
