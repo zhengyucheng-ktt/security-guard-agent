@@ -144,6 +144,10 @@ func adminOptimizeLocalModel(c *gin.Context) {
 
 	go func() {
 		t0 := time.Now()
+		// 立即显示总样本数（前端进度窗口可看到"0/N"而非"0/0"）
+		job.AttackTotal = len(collectAllAdversarialSamples())
+		job.FPTotal = len(normalSamplePool())
+		job.Stage = "攻击测试"
 		// 第 0 步：检测本地模型量级
 		model, err := detectLocalModel()
 		if err != nil {
@@ -153,8 +157,11 @@ func adminOptimizeLocalModel(c *gin.Context) {
 		job.Model = model
 		log.Printf("🧠 一键优化(%s): 检测到本地模型 %s（%s，%s档）", jobID, model.Name, model.ParamB, model.Tier)
 
-		// 第 1 步：攻击拦截测试
-		attackResults := runFullAttackJudge()
+		// 第 1 步：攻击拦截测试（带实时进度回调）
+		attackResults := runFullAttackJudge(func(done, blocked int) {
+			job.AttackTotal = done
+			job.AttackBefore = blocked
+		})
 		job.AttackTotal = len(attackResults)
 		job.AttackBefore = countAttackBlocked(attackResults)
 		job.Stage = "误伤测试"
@@ -195,7 +202,7 @@ func adminOptimizeLocalModel(c *gin.Context) {
 		}
 
 		// 第 5 步：优化后攻击测试（验证提升）
-		job.AttackAfter = countAttackBlocked(runFullAttackJudge())
+		job.AttackAfter = countAttackBlocked(runFullAttackJudge(nil))
 		job.FPCandidates = len(job.SkippedWords)
 		job.KeywordCov = len(customSuspiciousKeywords)
 		job.DurationSec = time.Since(t0).Seconds()
@@ -227,14 +234,18 @@ type attackJudgeResult struct {
 	Blocked  bool
 }
 
-func runFullAttackJudge() []attackJudgeResult {
+func runFullAttackJudge(progress func(done, blocked int)) []attackJudgeResult {
 	// 复用 selftest 的基础样本 + 变体（走真实 /v1/guard 判定逻辑：规则层 + isSuspicious + LLM）
 	// 简化：直接调用规则层 + LLM 判定组合（与 guardHandler 的 user_input 分支一致）
 	samples := collectAllAdversarialSamples()
 	results := make([]attackJudgeResult, 0, len(samples))
-	for _, s := range samples {
+	for i, s := range samples {
 		blocked := judgeSingleInput(s.Content)
 		results = append(results, attackJudgeResult{Content: s.Content, Category: s.Category, Blocked: blocked})
+		// 实时进度：每测 50 个更新一次 job 拦截数（前端进度窗口可见）
+		if progress != nil && (i+1)%50 == 0 {
+			progress(i+1, countAttackBlocked(results))
+		}
 	}
 	return results
 }

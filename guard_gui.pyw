@@ -728,10 +728,13 @@ class GuardConfigGUI:
                 o = r.json().get("optimize", {})
                 if not o.get("done"):
                     stage = o.get("stage", "测试中")
+                    atk_total = o.get("attack_total", 0) or 0
+                    fp_total = o.get("fp_total", 0) or 0
                     text.delete(1.0, tk.END)
                     text.insert(tk.END, f"🔄 优化进行中...（阶段: {stage}）\n"
-                                       f"攻击测试: {o.get('attack_before', 0)}/{o.get('attack_total', '?')} 拦截\n"
-                                       f"误伤基线: {o.get('fp_before', 0)}/{o.get('fp_total', '?')}\n")
+                                       f"攻击测试: 已完成 {o.get('attack_before', 0)}/{atk_total} 拦截\n"
+                                       f"误伤基线: {o.get('fp_before', 0)}/{fp_total}\n"
+                                       f"（攻击测试约需 3-5 分钟，请耐心等待）\n")
                     win.after(5000, poll)
                     return
                 # 完成
