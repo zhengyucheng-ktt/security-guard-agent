@@ -1,7 +1,7 @@
 package main
 
 // ============================================================
-// 一键优化：根据本地模型量级自动运行三项测试并优化审核触发词
+// 智能调优：根据本地模型量级自动运行三项测试并优化审核触发词
 // 三项测试：
 //   A. 攻击拦截测试（638 对抗样本）→ 找出穿透的
 //   B. 误伤测试（90 正常样本）→ 确保新关键词不误伤
@@ -105,7 +105,7 @@ func classifyModelSize(name string, sizeBytes int64) *modelSizeInfo {
 	return info
 }
 
-// OptimizeResult 一键优化结果
+// OptimizeResult 智能调优结果
 type OptimizeResult struct {
 	Model         *modelSizeInfo `json:"model"`
 	AttackTotal   int            `json:"attack_total"`
@@ -130,7 +130,7 @@ var (
 	optimizeJobSeq = 0
 )
 
-// adminOptimizeLocalModel 一键优化接口（异步）：立即返回 job id，后台执行三项测试
+// adminOptimizeLocalModel 智能调优接口（异步）：立即返回 job id，后台执行三项测试
 func adminOptimizeLocalModel(c *gin.Context) {
 	optimizeJobMu.Lock()
 	optimizeJobSeq++
@@ -155,7 +155,7 @@ func adminOptimizeLocalModel(c *gin.Context) {
 			return
 		}
 		job.Model = model
-		log.Printf("🧠 一键优化(%s): 检测到本地模型 %s（%s，%s档）", jobID, model.Name, model.ParamB, model.Tier)
+		log.Printf("🧠 智能调优(%s): 检测到本地模型 %s（%s，%s档）", jobID, model.Name, model.ParamB, model.Tier)
 
 		// 第 1 步：攻击拦截测试（带实时进度回调）
 		attackResults := runFullAttackJudge(func(done, blocked int) {

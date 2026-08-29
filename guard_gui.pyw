@@ -285,7 +285,7 @@ class GuardConfigGUI:
         tk.Label(header, text="🛡️ 安全交互守护智能体", font=("Microsoft YaHei", 16, "bold"),
                  bg='#f5f5f5', fg='#333').pack(side='left')
 
-        # 判定引擎模式一键切换（本地 / 云端 / 混合）
+        # 判定引擎模式 GUI 策略切换（本地 / 云端 / 混合）
         mode_frame = tk.Frame(header, bg='#f5f5f5')
         mode_frame.pack(side='left', padx=18)
         tk.Label(mode_frame, text="判定引擎:", bg='#f5f5f5', font=("Microsoft YaHei", 9)).pack(side='left')
@@ -322,7 +322,7 @@ class GuardConfigGUI:
                 b.config(bg='#E0E0E0', fg='#555')
 
     def _set_mode(self, mode):
-        """一键切换判定引擎模式（读取当前配置改 mode 后保存，热加载生效）。"""
+        """GUI 切换判定引擎模式（读取当前配置改 mode 后保存，热加载生效）。"""
         if not self._check_service_running():
             messagebox.showwarning("警告", "服务未运行，无法切换模式")
             return
@@ -704,15 +704,15 @@ class GuardConfigGUI:
         ToolTip(btn_custom, "接入你自己的业务语料\n"
                             "攻击样本 → 并入对抗测试（智能调优时自动合并）\n"
                             "正常样本 → 并入误伤测试（防止优化误伤你的业务语句）")
-        # 启动自检：确认一键优化按钮已创建（排查"看不到按钮"问题）
-        print("[DEBUG] 一键优化按钮已创建 (规则管理页, _create_rules_tab)")
+        # 启动自检：确认智能调优按钮已创建（排查"看不到按钮"问题）
+        print("[DEBUG] 智能调优按钮已创建 (规则管理页, _create_rules_tab)")
         tk.Label(test_frame, text="⚡规则回归=快速体检；🧪智能调优=深度优化；📥自定义样本=接入业务语料（鼠标悬停看说明）",
                  bg='white', fg='#888', font=("Microsoft YaHei", 8)).pack(side='left', padx=10)
 
     def _run_optimize(self):
-        """一键优化本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
+        """智能调优本地模型：检测量级 → 三项测试 → 自动写入安全触发词（异步+轮询进度）"""
         win = tk.Toplevel(self.root)
-        win.title("🧪 智能调优（一键优化本地模型）")
+        win.title("🧪 智能调优（本地模型自动化调优）")
         win.geometry("720x480")
         win.configure(bg='white')
         text = scrolledtext.ScrolledText(win, font=("Consolas", 9), bg='#1e1e1e', fg='#d4d4d4')
@@ -753,7 +753,7 @@ class GuardConfigGUI:
                 # 完成
                 model = o.get('model', {})
                 lines = [
-                    f"🎉 一键优化完成（耗时 {o.get('duration_sec', 0):.0f} 秒）\n",
+                    f"🎉 智能调优完成（耗时 {o.get('duration_sec', 0):.0f} 秒）\n",
                     f"🧠 本地模型: {model.get('name', '?')}（{model.get('param_b', '?')} 档）\n",
                     f"🛡 攻击拦截: {o.get('attack_before', 0)} → {o.get('attack_after', 0)} / {o.get('attack_total', 0)}\n",
                     f"✅ 误伤基线: {o.get('fp_before', 0)} / {o.get('fp_total', 0)}\n",
@@ -781,7 +781,7 @@ class GuardConfigGUI:
         win.configure(bg='white')
 
         # 说明
-        tk.Label(win, text="把你自己业务里见过的攻击语句 / 正常语句加进来，一键优化时会自动合并测试。",
+        tk.Label(win, text="把你自己业务里见过的攻击语句 / 正常语句加进来，智能调优时会自动合并测试。",
                  bg='white', fg='#555', font=("Microsoft YaHei", 9)).pack(anchor='w', padx=12, pady=(10, 2))
 
         # 添加区
@@ -906,7 +906,7 @@ class GuardConfigGUI:
         btn_row = tk.Frame(win, bg='white')
         btn_row.pack(fill='x', padx=8, pady=(0, 8))
         self._btn(btn_row, "🛡 采纳穿透样本为规则", self._adopt_bypass_samples, bg='#9C27B0', width=22).pack(side='left')
-        tk.Label(btn_row, text="穿透样本可一键转为审核触发词或关键词拦截，堵住绕过", bg='white', fg='#888',
+        tk.Label(btn_row, text="穿透样本可自动转为审核触发词或关键词拦截，堵住绕过", bg='white', fg='#888',
                  font=("Microsoft YaHei", 8)).pack(side='left', padx=8)
 
         def task():
@@ -1584,7 +1584,7 @@ class GuardConfigGUI:
         quick_btn = self._btn(frame, "🔑 快速配置云端审核模型（只需填 Key）", self._quick_cloud_setup,
                               bg='#9C27B0', width=28)
         quick_btn.grid(row=21, column=0, columnspan=2, sticky='w', pady=(8, 2))
-        ToolTip(quick_btn, "一键配置云端判定模型：\n"
+        ToolTip(quick_btn, "快捷配置云端判定模型：\n"
                            "· 选择模式（hybrid=本地初筛+云端终审，推荐）\n"
                            "· 填写云端 API Key（默认已预填 DeepSeek 接口与模型）\n"
                            "· 保存即生效（热加载，无需重启）\n"
