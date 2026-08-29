@@ -50,12 +50,20 @@ func tryDecodeVariants(content string) string {
 	return ""
 }
 
-// decodeOnce 单层解码：URL 编码（含 %）优先，其次 Base64（支持多层 B64: 前缀），再 HTML 实体 / Unicode 转义
+// decodeOnce 单层解码：URL 编码（含 % 或 + 空格形式）优先，其次 Base64（支持多层 B64: 前缀），再 HTML 实体 / Unicode 转义
 func decodeOnce(content string) string {
-	// URL 编码：仅当含 %（URL 编码标记）时尝试，避免把 Base64 的 + 误当空格
-	if strings.Contains(content, "%") {
+	// URL 编码：含 %（URL 编码标记）或 +（form 编码空格，如 ignore+all+previous）时尝试。
+	// 注意：纯 Base64 串也可能含 +（如 5b+95Wl），但 Base64 串通常长度是 4 的倍数且含 = 结尾，
+	// QueryUnescape 会把 + 当空格破坏它——所以仅当解码后明显不同且无 Base64 长串特征时才采纳。
+	if strings.Contains(content, "%") || strings.Contains(content, "+") {
 		if dec, err := url.QueryUnescape(content); err == nil && dec != content && isReadableText(dec) {
-			return dec
+			// 仅当解码后是"自然文本"才采纳：
+			// ① 含中文 → URL 编码的中文文本
+			// ② 全是英文单词（含空格，无数字混入）→ form 编码的英文短语（ignore all → ignore+all）
+			// Base64 串破坏后是"字母数字+空格"拼凑（如 5b 95Wl... 含数字），不会被误采纳
+			if hasChinese(dec) || isNaturalEnglishPhrase(dec) {
+				return dec
+			}
 		}
 	}
 	// Base64 编码：支持常见前缀标记（B64:/base64:/b64:，可多层），去空白后长度合规时尝试
@@ -103,6 +111,32 @@ func decodeOnce(content string) string {
 		}
 	}
 	return ""
+}
+
+// isNaturalEnglishPhrase 判断字符串是否为"自然英文短语"（含空格、由英文字母组成、无数字/符号混入）。
+// 用于区分 form 编码英文（ignore all → ignore+all）与 Base64 破坏产物（5b 95Wl... 含数字）。
+func isNaturalEnglishPhrase(s string) bool {
+	hasSpace := false
+	for _, r := range s {
+		if r == ' ' {
+			hasSpace = true
+			continue
+		}
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')) {
+			return false
+		}
+	}
+	return hasSpace && len(s) >= 8
+}
+
+// hasChinese 判断字符串是否包含中文字符
+func hasChinese(s string) bool {
+	for _, r := range s {
+		if r >= 0x4E00 && r <= 0x9FFF {
+			return true
+		}
+	}
+	return false
 }
 
 // isMostlyHex 判断字符串是否以十六进制字符为主（用于触发 hex 解码尝试）
