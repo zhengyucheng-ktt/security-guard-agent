@@ -232,6 +232,10 @@ func matchCandidates(content string) []string {
 	}
 	if dec := tryDecodeVariants(content); dec != "" && dec != content {
 		cands = append(cands, dec)
+		// 解码后再反转：对抗"编码+反写"组合（如 URL编码的 则规略忽 → 解码 → 反转 → 忽略规则）
+		if revDec := reverseRunes(dec); revDec != dec && len([]rune(revDec)) >= 3 {
+			cands = append(cands, revDec)
+		}
 	}
 	// 反转文本候选：对抗"反写"混淆（如 则规略忽 → 忽略规则）
 	rev := reverseRunes(content)
@@ -259,7 +263,46 @@ var injectionKeywords = []string{
 	"删除所有", "导出数据", "转走", "报复", "外部服务器", "泄密",
 }
 
+// compactForMatch 去除全部空白/零宽字符（对抗空格混淆：如 "ignore all" 拆成 "ign ore  al l" 后
+// 紧凑为 "ignoreall" 仍能匹配关键词紧凑形式）
+func compactForMatch(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsSpace(r) || r == '\u200B' || r == '\u200C' || r == '\u200D' || r == '\uFEFF' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// checkAuditInjection 审核标准注入检测：明确要求"忽略/无视/绕过审核标准（规则/判断标准）"→ 直接拦截。
+// 这是明确的越狱意图（试图让 AI 绕过审核），健康对话不存在此类表述；不依赖 LLM 判定。
+func checkAuditInjection(content string) (bool, string) {
+	verbs := []string{"忽略", "无视", "不理会", "忽视", "绕过", "跳过"}
+	targets := []string{"审核标准", "审核规则", "判断标准", "拦截标准", "审核机制", "安全审核", "审核指令"}
+	// 套取指令类：要求"打印/输出/念出/告诉我"+ 审核/判断规则 —— 正常对话不会要求输出审核规则
+	exposeVerbs := []string{"打印", "输出", "念出", "念一遍", "原样", "告诉我", "给我看"}
+	for _, cand := range matchCandidates(content) {
+		for _, v := range verbs {
+			for _, t := range targets {
+				if strings.Contains(cand, v) && strings.Contains(cand, t) {
+					return true, "审核标准注入（试图忽略/绕过审核）: " + v + t
+				}
+			}
+		}
+		for _, ev := range exposeVerbs {
+			for _, t := range targets {
+				if strings.Contains(cand, ev) && strings.Contains(cand, t) {
+					return true, "套取审核规则（要求输出审核标准）: " + ev + t
+				}
+			}
+		}
+	}
+	return false, ""
+}
+
 // checkInjection 综合检测注入意图（对候选变体逐一匹配规则与关键词）
+// 注意：该函数含"忽略/忘记/提示词"等宽泛词，用于输出/思维链扫描（AI 自主内容）；
+// 用户输入路径请用 checkChainIntention（仅思维链危险意图），避免误伤"忽略我上一条消息"等正常操作。
 func checkInjection(content string) (bool, string) {
 	// 快照规则中的正则部分
 	rulesMu.RLock()
@@ -272,6 +315,7 @@ func checkInjection(content string) (bool, string) {
 	rulesMu.RUnlock()
 
 	for _, cand := range matchCandidates(content) {
+		compact := compactForMatch(cand) // 对抗空格混淆（英文/拼音关键词紧凑匹配）
 		for _, rule := range regexRules {
 			if rule.Regex.MatchString(cand) {
 				return true, rule.Reason
@@ -281,9 +325,94 @@ func checkInjection(content string) (bool, string) {
 			if strings.Contains(cand, kw) {
 				return true, "命中注入关键词: " + kw
 			}
+			// 空格混淆变体：候选与关键词都紧凑后匹配（如 ign ore al l → ignore all）
+			if compact != "" && len(compact) >= 4 {
+				if ckw := compactForMatch(kw); len(ckw) >= 4 && strings.Contains(compact, ckw) {
+					return true, "命中注入关键词(紧凑): " + kw
+				}
+			}
 		}
 	}
 	return false, ""
+}
+
+// checkChainIntention 思维链危险意图检测（用户输入路径专用）：
+// 仅匹配"AI 自主/诱导产生的危险操作意图"，不含"忽略/忘记"等宽泛注入词，
+// 避免误伤"忽略我上一条消息"等正常用户操作。
+func checkChainIntention(content string) (bool, string) {
+	chainKeywords := []string{
+		"删除所有", "导出数据", "导出全部", "转走", "报复", "外部服务器", "泄密",
+		"删除全部", "删除一切", "转移资金",
+	}
+	for _, cand := range matchCandidates(content) {
+		for _, kw := range chainKeywords {
+			if strings.Contains(cand, kw) {
+				return true, "思维链危险意图: " + kw
+			}
+		}
+	}
+	return false, ""
+}
+
+// isEncodedForm 检测内容整体是否为编码/混淆形式（URL编码 / Base64 / Unicode转义 / HTML实体 / hex，
+// 含"编码文本插入空格"的双重混淆）。命中即强制送 LLM 深度判定（不直接拦截——
+// 用户粘贴正常 base64/编码内容时由大模型裁决，避免误伤）。
+// 判断依据：解码出可读明文 或 存在明显编码特征标记。
+func isEncodedForm(content string) bool {
+	// ① 紧凑后仍含编码特征标记（对抗"编码+空格"双重混淆）
+	compact := compactForMatch(content)
+	if compact != "" && hasEncodingMarker(compact) {
+		return true
+	}
+	// ② 原文/紧凑形式能解码出可读明文（说明是编码内容）
+	for _, cand := range []string{content, compact} {
+		if cand == "" {
+			continue
+		}
+		if dec := tryDecodeVariants(cand); dec != "" && dec != cand && isReadableText(dec) && len([]rune(dec)) >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+// hasEncodingMarker 检查字符串中的编码特征标记（URL编码/Base64/Unicode/HTML实体/hex 前缀）
+func hasEncodingMarker(s string) bool {
+	// URL 编码：% 后跟两位十六进制（%E5 等），出现 2 次以上
+	if pct := strings.Count(s, "%"); pct >= 2 {
+		hexish := 0
+		for i := 0; i+2 < len(s); i++ {
+			if s[i] == '%' && isHexChar(s[i+1]) && isHexChar(s[i+2]) {
+				hexish++
+			}
+		}
+		if hexish >= 2 {
+			return true
+		}
+	}
+	// Base64：含 "B64:" / "base64:" 前缀标记
+	low := strings.ToLower(s)
+	if strings.Contains(low, "b64:") || strings.Contains(low, "base64:") {
+		return true
+	}
+	// Unicode 转义：\uXXXX
+	if strings.Contains(s, "\\u") || strings.Contains(s, "\\U") {
+		return true
+	}
+	// HTML 实体：&#x
+	if strings.Contains(s, "&#") {
+		return true
+	}
+	// hex 前缀：hex:
+	if strings.Contains(low, "hex:") {
+		return true
+	}
+	return false
+}
+
+// isHexChar 判断字符是否为十六进制字符
+func isHexChar(c byte) bool {
+	return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
 }
 
 // ---- ③ 会话语境分（多轮渐进式注入防御） ----
@@ -299,6 +428,10 @@ const contextPoisonThreshold = 2 // 语境分达到该值后升级审查
 var poisoningKeywords = []string{
 	"扮演", "模拟", "假装你是", "假设你是", "设定为", "测试环境",
 	"你现在是", "想象你是", "无限制", "不受限制", "角色扮演",
+	// 心理操控/情感施压类（单条无害，多轮累积后升级审查）
+	"求你了", "最后一次", "帮帮我", "被开除", "都这么做", "能力不行",
+	"什么都能做", "别装了", "没人会", "就这一次", "我真的很需要",
+	"报酬", "一点点", "通过了我", "为什么你不", "很聪明",
 }
 
 // 高语境下的敏感请求词：语境分达标后，命中这些词联动拦截
