@@ -43,3 +43,8 @@ suspicious_keywords.json
 
 # 用户自定义样本（运行时数据，不提交）
 custom_samples.json
+
+# 无关项目残留（非本项目文件）
+git_demo/
+image-crawler-demo/
+parse_repo.py
