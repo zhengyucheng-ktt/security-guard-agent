@@ -1229,23 +1229,32 @@ func guardHandler(c *gin.Context) {
 	}
 
 	if decision == "allow" && req.ActionType == "user_input" {
-		// 触发 LLM 深审的信号：可疑词 / 思维链危险意图（转走/删除所有/导出数据/报复等）/
-		// 编码形式（URL/Base64/Unicode/HTML/hex，含空格双重混淆）/ 强制审查。
-		// 注：checkChainIntention 对编码变体会解码后匹配；不用 checkInjection 全量词
-		// （含"忽略/忘记"等宽泛词），避免误伤"忽略我上一条消息"等正常操作。
-		chainRisk, _ := checkChainIntention(req.Content)
-		if forceLLM || isSuspicious(req.Content) || chainRisk || isEncodedForm(req.Content) {
-			judgeContent := readableForJudge(req.Content) // 解码后给 LLM，避免乱码误判
-			log.Printf("🔍 内容可疑（强制审查=%v，思维链意图=%v，编码形式=%v），调用大模型判断: %s", forceLLM, chainRisk, isEncodedForm(req.Content), judgeContent)
-			t0 := time.Now()
-			hasRisk, _, reason := judgeByOllama(judgeContent)
-			llmMs += time.Since(t0).Milliseconds()
-			if hasRisk {
-				decision = "block"
-				riskLevel = "high"
-				blockReason = fmt.Sprintf("大模型判断存在风险: %s", reason)
-				delta = SCORE_SENSITIVE
-				log.Printf("🤖 大模型拦截: %s", reason)
+		// 格式校验：坏格式编码（编码+空格双重混淆）直接拦截，提示使用正确格式，不送 LLM
+		if mRisk, mReason := checkMalformedEncoding(req.Content); mRisk {
+			decision = "block"
+			riskLevel = "high"
+			blockReason = mReason
+			delta = SCORE_SENSITIVE
+			log.Printf("🛑 格式校验拦截（坏格式编码）: %s", req.Content[:min(len(req.Content), 60)])
+		} else {
+			// 触发 LLM 深审的信号：可疑词 / 思维链危险意图（转走/删除所有/导出数据/报复等）/
+			// 编码形式（URL/Base64/Unicode/HTML/hex，含空格双重混淆）/ 强制审查。
+			// 注：checkChainIntention 对编码变体会解码后匹配；不用 checkInjection 全量词
+			// （含"忽略/忘记"等宽泛词），避免误伤"忽略我上一条消息"等正常操作。
+			chainRisk, _ := checkChainIntention(req.Content)
+			if forceLLM || isSuspicious(req.Content) || chainRisk || isEncodedForm(req.Content) {
+				judgeContent := readableForJudge(req.Content) // 解码后给 LLM，避免乱码误判
+				log.Printf("🔍 内容可疑（强制审查=%v，思维链意图=%v，编码形式=%v），调用大模型判断: %s", forceLLM, chainRisk, isEncodedForm(req.Content), judgeContent)
+				t0 := time.Now()
+				hasRisk, _, reason := judgeByOllama(judgeContent)
+				llmMs += time.Since(t0).Milliseconds()
+				if hasRisk {
+					decision = "block"
+					riskLevel = "high"
+					blockReason = fmt.Sprintf("大模型判断存在风险: %s", reason)
+					delta = SCORE_SENSITIVE
+					log.Printf("🤖 大模型拦截: %s", reason)
+				}
 			}
 		}
 	}

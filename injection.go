@@ -388,6 +388,30 @@ func checkChainIntention(content string) (bool, string) {
 	return false, ""
 }
 
+// checkMalformedEncoding 检测"坏格式编码"：内容含编码标记（B64:/hex:/%URL 等），
+// 但格式被空格/异常字符破坏——原文无法解码，紧凑（去空格）后却能解出可读文本。
+// 这类"编码+空格双重混淆"是非法输入格式（正常用户不会这么发），直接拦截并提示格式错误，
+// 不送 LLM 判定（格式非法无需语义判断，也避免误判成本）。
+func checkMalformedEncoding(content string) (bool, string) {
+	// ① 必须含编码标记（原文或紧凑形式；空格可能破坏 %XX 连续性，故两者都查）
+	compact := compactForMatch(content)
+	if !hasEncodingMarker(content) && (compact == "" || !hasEncodingMarker(compact)) {
+		return false, ""
+	}
+	// ② 原文能直接解码出可读文本 → 是正常编码，不是坏格式
+	if dec := tryDecodeVariants(content); dec != "" && dec != content && isReadableText(dec) && len([]rune(dec)) >= 3 {
+		return false, ""
+	}
+	// ③ 紧凑（去空格）后能解出可读文本 → 说明被空格破坏了编码格式
+	if compact == content || compact == "" {
+		return false, ""
+	}
+	if dec := tryDecodeVariants(compact); dec != "" && dec != compact && isReadableText(dec) && len([]rune(dec)) >= 3 {
+		return true, "输入格式异常：检测到被破坏的编码（含空格混淆），请使用标准编码或明文格式提交"
+	}
+	return false, ""
+}
+
 // isEncodedForm 检测内容整体是否为编码/混淆形式（URL编码 / Base64 / Unicode转义 / HTML实体 / hex，
 // 含"编码文本插入空格"的双重混淆）。命中即强制送 LLM 深度判定（不直接拦截——
 // 用户粘贴正常 base64/编码内容时由大模型裁决，避免误伤）。
@@ -424,9 +448,9 @@ func hasEncodingMarker(s string) bool {
 			return true
 		}
 	}
-	// Base64：含 "B64:" / "base64:" 前缀标记
+	// Base64：含 "B64:" / "base64:" 前缀标记（容忍 B64 后跟空格/冒号的变形，如 "B64 :xxx"）
 	low := strings.ToLower(s)
-	if strings.Contains(low, "b64:") || strings.Contains(low, "base64:") {
+	if strings.Contains(low, "b64:") || strings.Contains(low, "base64:") || strings.HasPrefix(low, "b64 ") || strings.HasPrefix(low, "base64 ") {
 		return true
 	}
 	// Unicode 转义：\uXXXX
