@@ -389,24 +389,44 @@ func checkChainIntention(content string) (bool, string) {
 }
 
 // checkMalformedEncoding 检测"坏格式编码"：内容含编码标记（B64:/hex:/%URL 等），
-// 但格式被空格/异常字符破坏——原文无法解码，紧凑（去空格）后却能解出可读文本。
-// 这类"编码+空格双重混淆"是非法输入格式（正常用户不会这么发），直接拦截并提示格式错误，
-// 不送 LLM 判定（格式非法无需语义判断，也避免误判成本）。
+// 但格式被空格/异常字符破坏，或编码被再次编码（嵌套）——原文无法直接得到自然文本。
+// 这两类都是非法输入格式（正常用户不会这么发），直接拦截并提示格式错误，不送 LLM 判定。
 func checkMalformedEncoding(content string) (bool, string) {
-	// ① 必须含编码标记（原文或紧凑形式；空格可能破坏 %XX 连续性，故两者都查）
+	// ① 必须含编码标记：原文 / 紧凑形式 / 轻量解码一次后（嵌套编码的标记可能被外层编码掩盖，如 hex%3A 解码后才是 hex:）
 	compact := compactForMatch(content)
-	if !hasEncodingMarker(content) && (compact == "" || !hasEncodingMarker(compact)) {
+	dec1 := tryDecodeVariants(content)
+	// 轻量 URL 解码探针：仅解 %XX（不要求"自然文本"），用于识别被 URL 编码掩盖的编码标记
+	probe := ""
+	if strings.Contains(content, "%") {
+		if d, err := url.QueryUnescape(content); err == nil && d != content && isReadableText(d) {
+			probe = d
+		}
+	}
+	hasMark := hasEncodingMarker(content) ||
+		(compact != "" && hasEncodingMarker(compact)) ||
+		(dec1 != "" && dec1 != content && hasEncodingMarker(dec1)) ||
+		(probe != "" && hasEncodingMarker(probe))
+	if !hasMark {
 		return false, ""
 	}
-	// ② 原文能直接解码出可读文本 → 是正常编码，不是坏格式
-	if dec := tryDecodeVariants(content); dec != "" && dec != content && isReadableText(dec) && len([]rune(dec)) >= 3 {
+	// ② 原文/探针解码后：若仍是编码标记（嵌套编码）→ 非法嵌套格式
+	if dec1 != "" && dec1 != content && isReadableText(dec1) && len([]rune(dec1)) >= 3 {
+		if hasEncodingMarker(dec1) {
+			return true, "输入格式异常：检测到嵌套编码（编码后再编码），请使用标准编码或明文格式提交"
+		}
 		return false, ""
 	}
-	// ③ 紧凑（去空格）后能解出可读文本 → 说明被空格破坏了编码格式
+	if probe != "" && probe != content && len([]rune(probe)) >= 3 && hasEncodingMarker(probe) {
+		return true, "输入格式异常：检测到嵌套编码（编码后再编码），请使用标准编码或明文格式提交"
+	}
+	// ③ 紧凑（去空格）后能解出可读文本 → 被空格破坏了编码格式
 	if compact == content || compact == "" {
 		return false, ""
 	}
 	if dec := tryDecodeVariants(compact); dec != "" && dec != compact && isReadableText(dec) && len([]rune(dec)) >= 3 {
+		if hasEncodingMarker(dec) {
+			return true, "输入格式异常：检测到嵌套编码（编码后再编码），请使用标准编码或明文格式提交"
+		}
 		return true, "输入格式异常：检测到被破坏的编码（含空格混淆），请使用标准编码或明文格式提交"
 	}
 	return false, ""

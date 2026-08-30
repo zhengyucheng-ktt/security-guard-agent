@@ -353,6 +353,10 @@ func judgeSingleInput(content string) bool {
 	if rewritten != content {
 		content = rewritten
 	}
+	// 格式校验：坏格式编码（空格混淆/嵌套编码）直接拦截（与 handler 一致）
+	if mRisk, _ := checkMalformedEncoding(content); mRisk {
+		return true
+	}
 	// 规则层（改写后跳过 PII 检查）
 	if ok, _, _ := checkInputSkipPII(content); !ok {
 		return true
